@@ -44,8 +44,8 @@ AS4Sender.BuilderPullRequest pullBuilder = AS4Sender.builderPullRequest();
   The destination AS4 endpoint URL to send to.
 </ParamField>
 
-<ParamField path="body.pmode" type="IPMode" required>
-  The P-Mode governing this message exchange. If a `pmodeResolver` is configured and no PMode is set explicitly, a default is attempted via the resolver.
+<ParamField path="body.pmode" type="IPMode">
+  The P-Mode governing this message exchange. Optional — if not set explicitly, the `pmodeResolver` will attempt to find a matching PMode automatically based on the message metadata.
 </ParamField>
 
 ### Optional fields

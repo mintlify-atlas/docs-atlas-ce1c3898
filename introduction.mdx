@@ -63,13 +63,15 @@ phase4 is structured as a multi-module Maven project:
 |--------|---------|
 | `phase4-lib` | Core AS4 library — sender, receiver, crypto, PMode |
 | `phase4-profile-peppol` | Peppol AS4 profile definitions and validators |
-| `phase4-profile-cef` | CEF eDelivery profile |
+| `phase4-profile-cef` | CEF eDelivery profile (also used by EUDAMED) |
 | `phase4-profile-bdew` | BDEW energy sector profile |
 | `phase4-profile-entsog` | ENTSOG gas network profile |
-| `phase4-profile-eudamed` | EUDAMED medical devices profile |
+| `phase4-profile-dbnalliance` | DBNAlliance North American B2B profile |
+| `phase4-profile-edelivery2` | eDelivery AS4 2.0 profile (EdDSA/ECDSA variants) |
 | `phase4-peppol-client` | High-level Peppol sender (`Phase4PeppolSender`) |
 | `phase4-cef-client` | High-level CEF sender (`Phase4CEFSender`) |
 | `phase4-bdew-client` | High-level BDEW sender (`Phase4BDEWSender`) |
+| `phase4-eudamed-client` | High-level EUDAMED sender (`Phase4EudamedSender`) |
 | `phase4-peppol-servlet` | Peppol AS4 receiving servlet |
 | `phase4-peppol-server-webapp` | Example Peppol server web application |
 | `phase4-dynamic-discovery` | SMP/BDXR dynamic endpoint discovery |
