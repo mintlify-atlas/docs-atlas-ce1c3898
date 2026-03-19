@@ -1,0 +1,126 @@
+---
+title: AS4Servlet
+description: Servlet and handler classes for receiving AS4 messages in phase4.
+---
+
+**Package:** `com.helger.phase4.servlet`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+phase4 exposes a standard Jakarta Servlet for receiving AS4 messages. The servlet delegates to `AS4XServletHandler` for all processing logic.
+
+## AS4Servlet
+
+`AS4Servlet` extends `AbstractXServlet` and registers an `AS4XServletHandler` for HTTP `POST` requests. Multipart handling is disabled at the servlet level because phase4 manages it internally.
+
+<Note>
+`AS4Servlet` is suitable when a single AS4 profile is served. For multiple profiles on one server, register multiple servlet mappings and configure the `AS4XServletHandler` accordingly. See [Multi-Profile Handling](https://github.com/phax/phase4/wiki/Multi-Profile-Handling).
+</Note>
+
+### web.xml configuration
+
+```xml
+<servlet>
+  <servlet-name>AS4Servlet</servlet-name>
+  <servlet-class>com.helger.phase4.servlet.AS4Servlet</servlet-class>
+</servlet>
+<servlet-mapping>
+  <servlet-name>AS4Servlet</servlet-name>
+  <url-pattern>/as4</url-pattern>
+</servlet-mapping>
+```
+
+### Spring Boot / Jakarta EE registration
+
+```java
+import com.helger.phase4.servlet.AS4Servlet;
+import jakarta.servlet.annotation.WebServlet;
+
+@WebServlet(urlPatterns = "/as4")
+public class MyAS4Servlet extends AS4Servlet {
+    // Inherits all behavior from AS4Servlet
+}
+```
+
+## AS4XServletHandler
+
+`AS4XServletHandler` implements `IXServletSimpleHandler` and is the main incoming request processor.
+
+### Constructor
+
+```java
+new AS4XServletHandler()
+```
+
+### setRequestHandlerCustomizer
+
+```java
+public AS4XServletHandler setRequestHandlerCustomizer(
+    @Nullable IAS4ServletRequestHandlerCustomizer aHandlerCustomizer
+)
+```
+
+Sets an optional customizer that is called before the incoming `AS4RequestHandler` is invoked. This gives you the opportunity to plug in custom behavior (e.g. custom P-Mode resolution, custom crypto factory) at the handler level.
+
+<ParamField path="body.aHandlerCustomizer" type="IAS4ServletRequestHandlerCustomizer">
+  The customizer implementation. Pass `null` to remove an existing customizer.
+</ParamField>
+
+### getRequestHandlerCustomizer
+
+```java
+@Nullable
+public IAS4ServletRequestHandlerCustomizer getRequestHandlerCustomizer()
+```
+
+Returns the currently configured request handler customizer, or `null` if none is set.
+
+## IAS4ServletRequestHandlerCustomizer
+
+**Package:** `com.helger.phase4.servlet`
+
+Functional interface allowing injection of custom behavior into the `AS4RequestHandler` before it processes an incoming request.
+
+```java
+public interface IAS4ServletRequestHandlerCustomizer {
+    void customizeBeforeHandling(
+        @NonNull IRequestWebScopeWithoutResponse aRequestScope,
+        @NonNull AS4UnifiedResponse aUnifiedResponse,
+        @NonNull AS4RequestHandler aRequestHandler
+    );
+}
+```
+
+### Typical customizations via AS4RequestHandler
+
+Inside the customizer you can call methods on `AS4RequestHandler` such as:
+
+| Method | Description |
+|---|---|
+| `setCryptoFactorySign(IAS4CryptoFactory)` | Override the signing crypto factory |
+| `setCryptoFactoryCrypt(IAS4CryptoFactory)` | Override the encryption crypto factory |
+| `setIncomingProfileSelector(IAS4IncomingProfileSelector)` | Override profile selection |
+| `setIncomingSecurityConfig(IAS4IncomingSecurityConfiguration)` | Override security configuration |
+| `setPModeResolver(IPModeResolver)` | Override P-Mode resolution |
+
+### Example: custom crypto factory per request
+
+```java
+import com.helger.phase4.servlet.AS4XServletHandler;
+import com.helger.phase4.servlet.IAS4ServletRequestHandlerCustomizer;
+
+AS4XServletHandler handler = new AS4XServletHandler();
+handler.setRequestHandlerCustomizer((requestScope, response, requestHandler) -> {
+    // Inject a custom crypto factory based on request context
+    requestHandler.setCryptoFactorySign(myCryptoFactory);
+    requestHandler.setCryptoFactoryCrypt(myCryptoFactory);
+});
+```
+
+## Default behavior
+
+When no customizer is set, `AS4XServletHandler` uses:
+
+- **Crypto factory:** `AS4CryptoFactoryConfiguration.getDefaultInstanceOrNull()` (reads from `application.properties`)
+- **P-Mode resolver:** `AS4DefaultPModeResolver.INSTANCE`
+- **Profile selector:** `AS4IncomingProfileSelectorConstant` with the default profile from `AS4Configuration.getDefaultAS4ProfileID()`
+- **Security configuration:** Default `AS4IncomingSecurityConfiguration`

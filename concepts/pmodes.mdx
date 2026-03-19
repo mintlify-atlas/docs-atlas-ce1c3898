@@ -1,0 +1,231 @@
+---
+title: "PMode configuration"
+description: "Learn how Processing Modes (PModes) define the security, protocol, and party settings for each AS4 message exchange."
+---
+
+## What is a PMode?
+
+A Processing Mode (PMode) is the central configuration object in AS4. It describes the complete rules governing a message exchange between two parties:
+
+- Which parties are communicating and what roles they play
+- The MEP (One-Way/Push, Two-Way, One-Way/Pull)
+- The SOAP version and endpoint URL
+- Security settings (signing algorithm, encryption algorithm, receipt)
+- Business information (service, action, MPC)
+- Reliability and error handling behavior
+
+Every inbound and outbound AS4 message is matched against a registered PMode. If no matching PMode is found, the message is rejected.
+
+## PMode structure
+
+The `PMode` class (implementing `IPMode`) has the following top-level fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| ID | `String` | Unique PMode identifier |
+| Initiator | `PModeParty` | The party that initiates the MEP |
+| Responder | `PModeParty` | The party that responds |
+| Agreement | `String` | Optional agreement reference (`eb:AgreementRef`) |
+| MEP | `EMEP` | Message exchange pattern (`ONE_WAY` or `TWO_WAY`) |
+| MEPBinding | `EMEPBinding` | Transport binding (`PUSH`, `PULL`, etc.) |
+| Leg1 | `PModeLeg` | Configuration for the first (or only) message leg |
+| Leg2 | `PModeLeg` | Configuration for the second leg (Two-Way only) |
+| PayloadService | `PModePayloadService` | Optional payload compression settings |
+| ReceptionAwareness | `PModeReceptionAwareness` | Retry and duplicate detection settings |
+
+### PModeParty
+
+`PModeParty` represents one endpoint in a PMode. It holds the party identifier, role, and optional WS-Security username/password credentials.
+
+```java
+// Full constructor
+new PModeParty(
+    "iso6523-actorid-upis",  // ID type (optional)
+    "0088:5060000000001",     // ID value (required)
+    "http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator", // role
+    null,                    // username (optional)
+    null                     // password (optional)
+);
+
+// Convenience factory — no ID type, no credentials
+PModeParty simple = PModeParty.createSimple("myPartyId", "http://example.org/role/sender");
+```
+
+### PModeLeg
+
+Each `PModeLeg` contains five sub-components:
+
+| Sub-component | Class | Description |
+|---------------|-------|-------------|
+| Protocol | `PModeLegProtocol` | SOAP version and endpoint address |
+| Business info | `PModeLegBusinessInformation` | Service, action, MPC, payload profiles |
+| Error handling | `PModeLegErrorHandling` | How to report errors |
+| Reliability | `PModeLegReliability` | Duplicate detection and retry |
+| Security | `PModeLegSecurity` | WS-Security signing and encryption |
+
+```java
+// Create a leg protocol using the AS4 default SOAP version (1.2)
+PModeLegProtocol protocol = PModeLegProtocol.createForDefaultSoapVersion(
+    "https://receiver.example.com/as4"
+);
+
+// Or specify the SOAP version explicitly
+PModeLegProtocol protocol = new PModeLegProtocol(
+    "https://receiver.example.com/as4",
+    ESoapVersion.SOAP_12
+);
+```
+
+## Creating a PMode
+
+<Steps>
+  <Step title="Define the parties">
+    Create `PModeParty` instances for the initiator and responder.
+
+    ```java
+    PModeParty initiator = PModeParty.createSimple(
+        "sender-party-id",
+        "http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator"
+    );
+
+    PModeParty responder = PModeParty.createSimple(
+        "receiver-party-id",
+        "http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/responder"
+    );
+    ```
+  </Step>
+  <Step title="Configure the leg">
+    Build a `PModeLeg` with protocol, business information, and security settings.
+
+    ```java
+    PModeLegProtocol protocol = PModeLegProtocol.createForDefaultSoapVersion(
+        "https://receiver.example.com/as4"
+    );
+
+    PModeLegBusinessInformation businessInfo =
+        PModeLegBusinessInformation.create(
+            "http://example.org/service",   // service
+            "http://example.org/action",    // action
+            null,                           // service type (optional)
+            "urn:example:mpc:default"       // MPC
+        );
+
+    PModeLegSecurity security = new PModeLegSecurity();
+    security.setWSSVersion(EWSSVersion.WSS_111);
+    security.setX509SignatureAlgorithm(ECryptoAlgorithmSign.RSA_SHA_256);
+    security.setX509SignatureHashFunction(ECryptoAlgorithmSignDigest.DIGEST_SHA_256);
+    security.setX509EncryptionAlgorithm(ECryptoAlgorithmCrypt.AES_128_GCM);
+    security.setSendReceipt(true);
+    security.setSendReceiptReplyPattern(EPModeSendReceiptReplyPattern.RESPONSE);
+
+    PModeLeg leg1 = new PModeLeg(protocol, businessInfo, null, null, security);
+    ```
+  </Step>
+  <Step title="Construct the PMode">
+    Assemble all parts into a `PMode` instance.
+
+    ```java
+    PMode pMode = new PMode(
+        "my-pmode-id",          // unique ID
+        initiator,
+        responder,
+        "urn:example:agreement",
+        EMEP.ONE_WAY,
+        EMEPBinding.PUSH,
+        leg1,
+        null,                   // no second leg (one-way)
+        null,                   // no payload compression
+        null                    // no reception awareness
+    );
+    ```
+  </Step>
+  <Step title="Register the PMode">
+    Add the PMode to the manager so it is available for message matching.
+
+    ```java
+    IPModeManager pModeMgr = MetaAS4Manager.getPModeMgr();
+    pModeMgr.createPMode(pMode);
+    ```
+  </Step>
+</Steps>
+
+## PMode managers
+
+phase4 ships two `IPModeManager` implementations:
+
+<CardGroup cols={2}>
+  <Card title="PModeManagerInMemory" icon="memory">
+    Stores PModes in a `HashMap`. Suitable for applications that create PModes programmatically at startup. PModes are lost when the application restarts.
+  </Card>
+  <Card title="PModeManagerXML" icon="file">
+    Persists PModes to an XML file using the phoss DAO layer. PModes survive restarts and can be edited externally.
+  </Card>
+</CardGroup>
+
+```java
+// In-memory manager — no persistence
+IPModeManager memMgr = new PModeManagerInMemory();
+memMgr.createPMode(pMode);
+
+// XML-persisted manager
+IPModeManager xmlMgr = new PModeManagerXML("pmodes.xml");
+xmlMgr.createOrUpdatePMode(pMode); // create or update by ID
+
+// Access the global manager configured by phase4
+IPModeManager globalMgr = MetaAS4Manager.getPModeMgr();
+```
+
+<Tip>
+  Use `createOrUpdatePMode` when you want idempotent startup initialization — it creates a new PMode if the ID does not exist or updates the existing one.
+</Tip>
+
+## Default PMode
+
+`DefaultPMode` provides a fallback One-Way/Push PMode that conforms to the base ebMS 3.0 specification with no profile-specific constraints. It is useful for testing or as a starting point before adopting a specific profile.
+
+```java
+// Get or create the default PMode (persisted in the global manager)
+IPMode defaultPMode = DefaultPMode.getOrCreateDefaultPMode(
+    "my-sender-id",       // initiator ID value
+    "my-receiver-id",     // responder ID value
+    "https://receiver.example.com/as4", // endpoint URL
+    true                  // persist into the PMode manager
+);
+```
+
+The returned PMode uses:
+- `EMEP.ONE_WAY` + `EMEPBinding.PUSH`
+- `ESoapVersion.AS4_DEFAULT` (SOAP 1.2)
+- Receipt enabled with synchronous reply pattern
+- ID type `"default"` for both parties
+
+## How PModes are resolved for incoming messages
+
+When phase4 receives an AS4 message it matches the message against registered PModes in the following order:
+
+1. Extract the initiator party ID and responder party ID from the `eb:PartyInfo` element.
+2. Extract the service and action from `eb:CollaborationInfo`.
+3. Call `IPModeManager.findPModeByID(...)` — exact match by PMode ID if present in the message.
+4. Fall back to a linear scan of all registered PModes, applying the profile-specific `IAS4ProfileValidator` if one is configured.
+
+<Note>
+  Profile modules such as `phase4-profile-peppol` override the default PMode resolution with their own logic, matching on party identifiers, service type, and action values defined by the profile specification.
+</Note>
+
+## Reading PMode fields
+
+The `IPMode` interface exposes read-only accessors for all fields:
+
+```java
+IPMode pm = MetaAS4Manager.getPModeMgr().getPModeOfID("my-pmode-id");
+
+if (pm != null) {
+    String pmodeId   = pm.getID();
+    EMEP mep         = pm.getMEP();         // EMEP.ONE_WAY or EMEP.TWO_WAY
+    EMEPBinding bind = pm.getMEPBinding();  // EMEPBinding.PUSH etc.
+    PModeLeg leg1    = pm.getLeg1();
+
+    boolean hasLeg2  = pm.hasLeg2();
+    String initiatorId = pm.getInitiatorID(); // null if no initiator set
+}
+```

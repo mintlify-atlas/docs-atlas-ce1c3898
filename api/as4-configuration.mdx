@@ -1,0 +1,139 @@
+---
+title: AS4Configuration
+description: Central phase4 configuration class providing all global properties and configuration access.
+---
+
+**Package:** `com.helger.phase4.config`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+`AS4Configuration` is a final utility class holding the global phase4 configuration. It wraps a `IConfigWithFallback` instance and provides typed accessors for all phase4-specific configuration keys. The configuration is read-write in a thread-safe manner.
+
+<Note>
+All properties can be set in `application.properties`, as environment variables, or as Java system properties. The precedence follows the standard helger-config lookup order.
+</Note>
+
+## Configuration properties
+
+| Property key | Constant | Default | Description |
+|---|---|---|---|
+| `global.debug` | — | `false` | Enable global debug mode |
+| `global.production` | — | `false` | Enable global production mode |
+| `global.nostartupinfo` | — | `true` | Suppress startup log output |
+| `global.datapath` | — | `phase4-data` | Base directory for persistent data |
+| `phase4.manager.inmemory` | `PROPERTY_PHASE4_MANAGER_INMEMORY` | `true` | Use in-memory managers instead of XML-backed |
+| `phase4.wss4j.syncsecurity` | `PROPERTY_PHASE4_WSS4J_SYNCSECURITY` | `false` | Synchronize WSS4J sign/encrypt/verify/decrypt operations |
+| `phase4.default.profile` | — | `null` | Default AS4 profile ID |
+| `phase4.incoming.duplicatedisposal.minutes` | — | `10` | Minutes to retain incoming message IDs for duplicate detection |
+| `phase4.dump.path` | — | `phase4-dumps` | Base directory for message dumps |
+| `phase4.endpoint.address` | — | `null` | The AS4 endpoint address of this access point |
+| `phase4.errormsg.include.stacktraces` | — | `false` | Include Java stack traces in AS4 error messages |
+| `phase4.compatibility.domibus` | — | `false` | Enable Domibus compatibility mode |
+| `phase4.http.response.accept.allstatuscodes` | — | `true` | Accept all HTTP response status codes (since 4.1.1) |
+
+### Constants
+
+```java
+AS4Configuration.PROPERTY_PHASE4_MANAGER_INMEMORY  // "phase4.manager.inmemory"
+AS4Configuration.DEFAULT_PHASE4_MANAGER_INMEMORY   // true
+
+AS4Configuration.PROPERTY_PHASE4_WSS4J_SYNCSECURITY  // "phase4.wss4j.syncsecurity"
+AS4Configuration.DEFAULT_PHASE4_WSS4J_SYNCSECURITY   // false
+
+AS4Configuration.DEFAULT_PHASE4_INCOMING_DUPLICATEDISPOSAL_MINUTES  // 10
+```
+
+## Static accessor methods
+
+### Configuration management
+
+```java
+// Get the current global configuration
+IConfigWithFallback config = AS4Configuration.getConfig();
+
+// Replace the global configuration (primarily for testing)
+IConfigWithFallback old = AS4Configuration.setConfig(myConfig);
+```
+
+<ParamField path="query.aNewConfig" type="IConfigWithFallback" required>
+  The new configuration to use globally. Must not be `null`.
+</ParamField>
+
+### Runtime mode
+
+```java
+boolean debug      = AS4Configuration.isGlobalDebug();
+boolean production = AS4Configuration.isGlobalProduction();
+boolean noStartup  = AS4Configuration.isNoStartupInfo();
+```
+
+### File paths
+
+```java
+String dataPath          = AS4Configuration.getDataPath();       // relative or absolute
+String dumpPath          = AS4Configuration.getDumpBasePath();   // relative or absolute
+java.io.File dumpPathFile = AS4Configuration.getDumpBasePathFile(); // always absolute File
+```
+
+### Manager and security
+
+```java
+boolean inMemory   = AS4Configuration.isUseInMemoryManagers();
+boolean syncWss4j  = AS4Configuration.isWSS4JSynchronizedSecurity();
+```
+
+### Incoming messages
+
+```java
+String profileID   = AS4Configuration.getDefaultAS4ProfileID();         // nullable
+long dupMinutes    = AS4Configuration.getIncomingDuplicateDisposalMinutes(); // default 10
+String thisEndpt   = AS4Configuration.getThisEndpointAddress();         // nullable
+```
+
+### Error messages and compatibility
+
+```java
+boolean stackTraces  = AS4Configuration.isIncludeStackTraceInErrorMessages();
+boolean domibus      = AS4Configuration.isCompatibilityModeDomibus();      // since 4.0.1
+boolean allStatus    = AS4Configuration.isHttpResponseAcceptAllStatusCodes(); // since 4.1.1
+```
+
+### Deprecated: createPhase4ValueProvider()
+
+```java
+/**
+ * @deprecated since 4.0.1 — use ConfigFactory.createDefaultValueProvider() instead.
+ * Previously added support for phase4.properties and private-phase4.properties lookup
+ * files with higher priority than application.properties.
+ */
+@Deprecated
+MultiConfigurationValueProvider vp = AS4Configuration.createPhase4ValueProvider();
+```
+
+## Example: using a custom configuration
+
+```java
+import com.helger.config.fallback.ConfigWithFallback;
+import com.helger.config.source.MultiConfigurationValueProvider;
+import com.helger.phase4.config.AS4Configuration;
+
+MultiConfigurationValueProvider vp = ConfigFactory.createDefaultValueProvider();
+vp.addConfigurationSource(
+    new ConfigurationSourceProperties(myPropertiesResource, StandardCharsets.UTF_8),
+    300 // high priority
+);
+AS4Configuration.setConfig(new ConfigWithFallback(vp));
+```
+
+## Example: application.properties
+
+```properties
+global.debug=false
+global.production=true
+global.datapath=/var/data/phase4
+phase4.manager.inmemory=true
+phase4.wss4j.syncsecurity=true
+phase4.incoming.duplicatedisposal.minutes=30
+phase4.dump.path=/var/log/phase4-dumps
+phase4.endpoint.address=https://myap.example.com/as4
+phase4.default.profile=peppol
+```

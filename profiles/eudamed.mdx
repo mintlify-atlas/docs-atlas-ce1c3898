@@ -1,0 +1,95 @@
+---
+title: EUDAMED Profile
+description: AS4 profile for the European Union Medical Devices Database (EUDAMED).
+---
+
+
+EUDAMED (European Union Medical Devices Database) uses the CEF eDelivery four-corner AS4 profile for exchanging medical device data between national competent authorities and the European Commission.
+
+<CardGroup cols={2}>
+  <Card title="Maven Artifact" icon="box">
+    `phase4-eudamed-client`
+  </Card>
+  <Card title="Underlying Profile" icon="layers">
+    CEF four-corner
+  </Card>
+</CardGroup>
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-eudamed-client</artifactId>
+  <version>4.4.1-SNAPSHOT</version>
+</dependency>
+```
+
+## Overview
+
+EUDAMED does not define its own profile module; instead it uses the CEF four-corner profile (`phase4-profile-cef`) and adds EUDAMED-specific HTTP client configuration. The sender builder class `Phase4EudamedSender` sets the profile ID to `AS4CEFProfileRegistarSPI.AS4_PROFILE_ID_FOUR_CORNER` automatically.
+
+## HTTP client settings
+
+`Phase4EudamedHttpClientSettings` provides EUDAMED-appropriate defaults:
+
+| Setting | Value |
+|---------|-------|
+| TLS version | TLS 1.2 |
+| Connection request timeout | 1 second |
+| Connect timeout | 5 seconds |
+| Response timeout | 100 seconds |
+| User-Agent | `phase4/{version} https://github.com/phax/phase4` |
+
+```java
+import com.helger.phase4.eudamed.Phase4EudamedHttpClientSettings;
+
+// Note: constructor throws GeneralSecurityException
+Phase4EudamedHttpClientSettings httpSettings = new Phase4EudamedHttpClientSettings();
+```
+
+<Note>
+`Phase4EudamedHttpClientSettings` trusts all TLS server certificates. In production deployments, you should configure a proper `TrustManager` with EUDAMED's specific CA certificates.
+</Note>
+
+## Security requirements
+
+Being based on the CEF profile, EUDAMED uses the same security settings:
+
+| Setting | Required value |
+|---------|----------------|
+| Signature algorithm | `RSA_SHA_256` |
+| Signature hash function | `SHA-256` |
+| Encryption algorithm | `AES-128-GCM` |
+| WSS version | `1.1.1` |
+| PModeAuthorize | `false` |
+| Receipt reply pattern | `Response` |
+| Non-repudiation | `true` |
+
+## Message structure
+
+EUDAMED follows the CEF four-corner model:
+
+- **`originalSender`** message property is required
+- **`finalRecipient`** message property is required
+- Agreement ID: `urn:as4:agreement` (inherited from CEF)
+- PartyInfo must contain at most one `PartyID` per side
+
+## Sender builder
+
+The `Phase4EudamedSender` class provides a fluent builder for constructing EUDAMED outbound messages:
+
+```java
+import com.helger.phase4.eudamed.Phase4EudamedSender;
+
+Phase4EudamedSender.builder()
+    .fromPartyID("your-from-party-id")
+    .toPartyID("target-party-id")
+    .payload(myPayload)
+    .httpClientSettings(new Phase4EudamedHttpClientSettings())
+    .sendMessageAndCheckForReceipt();
+```
+
+<Tip>
+See the `Phase4EudamedSender` Javadoc for the full list of builder methods and required parameters.
+</Tip>

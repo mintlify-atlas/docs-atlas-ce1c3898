@@ -1,0 +1,212 @@
+---
+title: Servlet Setup
+description: Register the AS4Servlet in web.xml, initialize the AS4 server, and optionally customize request handling.
+---
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-lib</artifactId>
+</dependency>
+```
+
+## Register the servlet
+
+Add the following snippet to your `WEB-INF/web.xml`. The servlet handles only HTTP POST. Multipart parsing is handled internally by phase4, so leave the container's multipart support disabled.
+
+```xml
+<servlet>
+  <servlet-name>AS4Servlet</servlet-name>
+  <servlet-class>com.helger.phase4.servlet.AS4Servlet</servlet-class>
+</servlet>
+<servlet-mapping>
+  <servlet-name>AS4Servlet</servlet-name>
+  <url-pattern>/as4</url-pattern>
+</servlet-mapping>
+```
+
+<Note>
+`AS4Servlet` works when a single AS4 profile is active. For multiple profiles served from the same application, register multiple servlets and configure each `AS4XServletHandler` with a different profile. See the [Multi-Profile Handling](https://github.com/phax/phase4/wiki/Multi-Profile-Handling) wiki page.
+</Note>
+
+## Initialize the server
+
+Call `AS4ServerInitializer.initAS4Server()` once during application startup — typically from a `ServletContextListener`. It initialises the internal manager singletons and starts the background job that removes old duplicate-detection metadata.
+
+```java
+import com.helger.phase4.incoming.AS4ServerInitializer;
+
+public class MyAppListener implements ServletContextListener {
+
+    @Override
+    public void contextInitialized(ServletContextEvent sce) {
+        // Must be called before the first request is handled
+        AS4ServerInitializer.initAS4Server();
+    }
+
+    @Override
+    public void contextDestroyed(ServletContextEvent sce) {
+        AS4ServerInitializer.shutdownAS4Server();
+    }
+}
+```
+
+<Warning>
+Failing to call `initAS4Server()` means the duplicate-detection cleanup job never starts and the `MetaAS4Manager` may not be initialised, which causes `NullPointerException`s at runtime.
+</Warning>
+
+## Configure AS4IncomingReceiverConfiguration
+
+`AS4IncomingReceiverConfiguration` tells the incoming handler what endpoint address this server considers itself to be. Its default constructor reads the value from the `phase4.endpoint.address` configuration property.
+
+```java
+import com.helger.phase4.incoming.AS4IncomingReceiverConfiguration;
+
+// Default: reads phase4.endpoint.address from configuration
+AS4IncomingReceiverConfiguration cfg = new AS4IncomingReceiverConfiguration();
+
+// Or set the endpoint URL explicitly
+cfg.setReceiverEndpointAddress("https://my-ap.example.com/as4");
+```
+
+The configuration object is passed to `AS4RequestHandler` either through the default wiring inside `AS4XServletHandler` or through `IAS4ServletRequestHandlerCustomizer`.
+
+## Customize request handling
+
+`IAS4ServletRequestHandlerCustomizer` gives you hooks that fire before and after `AS4RequestHandler` processes the request. Use it to supply a non-default crypto factory, override security settings, or add observability.
+
+```java
+import com.helger.phase4.servlet.IAS4ServletRequestHandlerCustomizer;
+import com.helger.phase4.servlet.AS4UnifiedResponse;
+import com.helger.phase4.incoming.AS4RequestHandler;
+import com.helger.web.scope.IRequestWebScopeWithoutResponse;
+
+public class MyHandlerCustomizer implements IAS4ServletRequestHandlerCustomizer {
+
+    @Override
+    public void customizeBeforeHandling(
+            IRequestWebScopeWithoutResponse aRequestScope,
+            AS4UnifiedResponse aUnifiedResponse,
+            AS4RequestHandler aRequestHandler) {
+
+        // Example: override the receiver endpoint address per-request
+        aRequestHandler.setIncomingReceiverConfiguration(
+            new AS4IncomingReceiverConfiguration()
+                .setReceiverEndpointAddress("https://my-ap.example.com/as4"));
+    }
+
+    @Override
+    public void customizeAfterHandling(
+            IRequestWebScopeWithoutResponse aRequestScope,
+            AS4UnifiedResponse aUnifiedResponse,
+            AS4RequestHandler aRequestHandler) {
+        // Runs only when no exception was thrown during processing
+    }
+}
+```
+
+Register the customizer on the handler:
+
+```java
+import com.helger.phase4.servlet.AS4XServletHandler;
+
+// In a custom servlet constructor or factory
+AS4XServletHandler handler = new AS4XServletHandler();
+handler.setRequestHandlerCustomizer(new MyHandlerCustomizer());
+```
+
+Alternatively, extend `AS4XServletHandler` directly and override `createIncomingMessageMetadata()` if you need to adjust how connection metadata is derived — for example, when the server sits behind a reverse proxy and the real client IP is in a custom HTTP header.
+
+```java
+public class ProxyAwareXServletHandler extends AS4XServletHandler {
+
+    @Override
+    protected AS4IncomingMessageMetadata createIncomingMessageMetadata(
+            IRequestWebScopeWithoutResponse aRequestScope) {
+
+        // Read the real IP from the X-Forwarded-For header
+        String realIP = aRequestScope.getRequest().getHeader("X-Forwarded-For");
+
+        return AS4IncomingMessageMetadata.createForRequest()
+                .setRemoteAddr(realIP != null ? realIP : aRequestScope.getRemoteAddr())
+                .setRemoteHost(aRequestScope.getRemoteHost())
+                .setRemotePort(aRequestScope.getRemotePort())
+                .setRemoteUser(aRequestScope.getRemoteUser())
+                .setCookies(aRequestScope.getCookies())
+                .setHttpHeaders(aRequestScope.headers());
+    }
+}
+```
+
+## Implement IAS4IncomingMessageProcessorSPI
+
+Register at least one SPI implementation to receive user messages. Create the service descriptor file and the implementing class:
+
+**`META-INF/services/com.helger.phase4.incoming.spi.IAS4IncomingMessageProcessorSPI`**
+```
+com.example.myapp.MyAS4MessageProcessor
+```
+
+```java
+import com.helger.phase4.incoming.spi.IAS4IncomingMessageProcessorSPI;
+import com.helger.phase4.incoming.spi.AS4MessageProcessorResult;
+import com.helger.phase4.incoming.spi.AS4SignalMessageProcessorResult;
+import com.helger.phase4.incoming.IAS4IncomingMessageMetadata;
+import com.helger.phase4.incoming.IAS4IncomingMessageState;
+import com.helger.phase4.ebms3header.Ebms3UserMessage;
+import com.helger.phase4.ebms3header.Ebms3SignalMessage;
+import com.helger.phase4.error.AS4ErrorList;
+import com.helger.phase4.model.pmode.IPMode;
+import com.helger.phase4.attachment.WSS4JAttachment;
+import com.helger.http.header.HttpHeaderMap;
+import com.helger.collection.commons.ICommonsList;
+import org.w3c.dom.Node;
+
+public class MyAS4MessageProcessor implements IAS4IncomingMessageProcessorSPI {
+
+    @Override
+    public AS4MessageProcessorResult processAS4UserMessage(
+            IAS4IncomingMessageMetadata aMessageMetadata,
+            HttpHeaderMap aHttpHeaders,
+            Ebms3UserMessage aUserMessage,
+            IPMode aPMode,
+            Node aPayload,
+            ICommonsList<WSS4JAttachment> aIncomingAttachments,
+            IAS4IncomingMessageState aIncomingState,
+            AS4ErrorList aProcessingErrorMessages) {
+
+        // Your business logic here
+        // Return success to trigger a Receipt signal
+        return AS4MessageProcessorResult.createSuccess();
+    }
+
+    @Override
+    public AS4SignalMessageProcessorResult processAS4SignalMessage(
+            IAS4IncomingMessageMetadata aMessageMetadata,
+            HttpHeaderMap aHttpHeaders,
+            Ebms3SignalMessage aSignalMessage,
+            IPMode aPMode,
+            IAS4IncomingMessageState aIncomingState,
+            AS4ErrorList aProcessingErrorMessages) {
+
+        return AS4SignalMessageProcessorResult.createSuccess();
+    }
+
+    @Override
+    public void processAS4ResponseMessage(
+            IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+            IAS4IncomingMessageState aIncomingState,
+            String sResponseMessageID,
+            byte[] aResponseBytes,
+            boolean bResponsePayloadIsAvailable,
+            AS4ErrorList aEbmsErrorMessages) {
+        // Optional: inspect the outgoing receipt/error that was sent back
+    }
+}
+```
+
+<Tip>
+Return `AS4MessageProcessorResult.createSuccess()` to have phase4 automatically send back an AS4 Receipt signal to the sender. Return `AS4MessageProcessorResult.createFailure()` (optionally with error details added to `aProcessingErrorMessages`) to have phase4 send back an AS4 Error signal instead.
+</Tip>

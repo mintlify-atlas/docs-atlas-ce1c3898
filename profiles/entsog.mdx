@@ -1,0 +1,118 @@
+---
+title: ENTSOG Profile
+description: AS4 profile for European natural gas transmission system operators (ENTSOG).
+---
+
+
+The ENTSOG profile is used by European natural gas Transmission System Operators (TSOs) for electronic data interchange. It is defined by ENTSOG (European Network of Transmission System Operators for Gas) and closely follows the CEF eDelivery structure.
+
+<CardGroup cols={2}>
+  <Card title="Maven Artifact" icon="box">
+    `phase4-profile-entsog`
+  </Card>
+  <Card title="Profile ID" icon="fingerprint">
+    `entsog`
+  </Card>
+</CardGroup>
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-profile-entsog</artifactId>
+  <version>4.4.1-SNAPSHOT</version>
+</dependency>
+```
+
+## Overview
+
+ENTSOG is a one-way/push profile. Parties are identified using ENTSOG EIC (Energy Identification Code) party IDs:
+
+```text
+Party type: http://www.entsog.eu/eic-codes/eic-party-codes-x
+```
+
+## PMode structure
+
+```java
+import com.helger.phase4.profile.entsog.ENTSOGPMode;
+import com.helger.phase4.model.pmode.IPModeIDProvider;
+
+PMode pMode = ENTSOGPMode.createENTSOGPMode(
+    "initiator-eic-id",
+    "responder-eic-id",
+    "https://responder.example.com/as4",
+    IPModeIDProvider.DEFAULT_DYNAMIC,
+    true  // persist
+);
+```
+
+| Parameter | Value |
+|-----------|-------|
+| MEP | One-Way |
+| MEP Binding | Push |
+| Agreement ID | `urn:as4:agreement` |
+| Party type | `http://www.entsog.eu/eic-codes/eic-party-codes-x` |
+| SOAP version | SOAP 1.2 (AS4 default) |
+| Payload compression | GZIP (mandatory) |
+
+## Security requirements
+
+The `ENTSOGCompatibilityValidator` enforces the following:
+
+| Setting | Required value |
+|---------|----------------|
+| Signature algorithm | `RSA_SHA_256` |
+| Signature hash function | `SHA-256` |
+| Encryption algorithm | `AES-128-GCM` |
+| WSS version | `1.1.1` |
+| PModeAuthorize | `false` |
+| Receipt reply pattern | `Response` |
+| Non-repudiation | `true` |
+| Username token | Must NOT be set |
+
+<Warning>
+The ENTSOG profile explicitly prohibits username tokens. Any username token configuration will cause a validation error.
+</Warning>
+
+## Message validation specifics
+
+The ENTSOG validator has stricter rules compared to CEF:
+
+- **`MessageInfo/RefToMessageId`** must NOT be set on user messages
+- **`CollaborationInfo/AgreementRef`** value must be non-empty
+- **`CollaborationInfo/PMode`** must NOT be set
+- **`ErrorHandling/ReportSenderErrorsTo`** must NOT be set
+- **AddressProtocol** is mandatory (unlike Peppol/CEF where it is optional)
+- **Payload compression** is mandatory: `PMode.PayloadService.CompressionMode` must be `GZIP`
+
+```java
+// The ENTSOG PMode includes GZIP payload service by default:
+// ENTSOGPMode.generatePModePayloadSevice() returns PModePayloadService(EAS4CompressionMode.GZIP)
+```
+
+## Reception awareness
+
+```java
+// From ENTSOGPMode.generatePModeReceptionAwareness():
+// receptionAwareness = true
+// retry = true
+// maxRetries = 1
+// retryIntervalMS = 10_000 (10 seconds)
+// duplicateDetection = true
+```
+
+## Profile registration
+
+The ENTSOG profile is auto-registered via SPI. The SPI implementation `AS4ENTSOGProfileRegistarSPI` registers the profile under ID `entsog`:
+
+```java
+// Profile constants in AS4ENTSOGProfileRegistarSPI:
+public static final String AS4_PROFILE_ID = "entsog";
+public static final String AS4_PROFILE_NAME = "ENTSOG";
+```
+
+<Note>
+The profile is automatically discovered via `META-INF/services/com.helger.phase4.profile.IAS4ProfileRegistrarSPI` when the artifact is on the classpath.
+</Note>

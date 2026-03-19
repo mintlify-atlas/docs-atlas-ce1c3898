@@ -1,0 +1,245 @@
+---
+title: AS4Sender
+description: Generic AS4 user message and pull request sending API for the phase4 library.
+---
+
+**Package:** `com.helger.phase4.sender`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+`AS4Sender` is the entry point for sending generic AS4 messages without applying any profile-specific settings. Use the profile-specific senders (e.g. `Phase4PeppolSender`) when you need profile enforcement.
+
+## Factory methods
+
+```java
+// Create a builder for a User Message (sends a payload)
+AS4Sender.BuilderUserMessage builder = AS4Sender.builderUserMessage();
+
+// Create a builder for a Pull Request (since 0.12.0)
+AS4Sender.BuilderPullRequest pullBuilder = AS4Sender.builderPullRequest();
+```
+
+## BuilderUserMessage
+
+`BuilderUserMessage` extends `AbstractAS4UserMessageBuilderMIMEPayload`. The payload is always placed in a MIME part rather than in the SOAP body.
+
+### Required fields
+
+<ParamField path="body.fromPartyID" type="String" required>
+  The AS4 sender party identifier value. Maps to `eb:PartyInfo/eb:From/eb:PartyId`.
+</ParamField>
+
+<ParamField path="body.fromRole" type="String" required>
+  The sender role URI. Maps to `eb:PartyInfo/eb:From/eb:Role`.
+</ParamField>
+
+<ParamField path="body.toPartyID" type="String" required>
+  The AS4 receiver party identifier value. Maps to `eb:PartyInfo/eb:To/eb:PartyId`.
+</ParamField>
+
+<ParamField path="body.toRole" type="String" required>
+  The receiver role URI. Maps to `eb:PartyInfo/eb:To/eb:Role`.
+</ParamField>
+
+<ParamField path="body.endpointURL" type="String" required>
+  The destination AS4 endpoint URL to send to.
+</ParamField>
+
+<ParamField path="body.pmode" type="IPMode" required>
+  The P-Mode governing this message exchange. If a `pmodeResolver` is configured and no PMode is set explicitly, a default is attempted via the resolver.
+</ParamField>
+
+### Optional fields
+
+<ParamField path="body.fromPartyIDType" type="String">
+  The party ID type (scheme) for the sender party. Optional.
+</ParamField>
+
+<ParamField path="body.toPartyIDType" type="String">
+  The party ID type (scheme) for the receiver party. Optional.
+</ParamField>
+
+<ParamField path="body.serviceType" type="String">
+  The service type of the `eb:Service` element. Optional.
+</ParamField>
+
+<ParamField path="body.service" type="String">
+  The service value of the `eb:Service` element. Optional.
+</ParamField>
+
+<ParamField path="body.action" type="String">
+  The `eb:Action` value. Optional.
+</ParamField>
+
+<ParamField path="body.agreementRef" type="String">
+  The `eb:AgreementRef` value. Optional.
+</ParamField>
+
+<ParamField path="body.agreementType" type="String">
+  The `eb:AgreementRef type` attribute value. Optional. Since 2.7.8.
+</ParamField>
+
+<ParamField path="body.pmodeID" type="String">
+  The PMode ID to be included in the user message. Optional.
+</ParamField>
+
+<ParamField path="body.conversationID" type="String">
+  The AS4 conversation ID. If not set, a random ID is generated.
+</ParamField>
+
+<ParamField path="body.payload" type="AS4OutgoingAttachment">
+  The main payload sent as the first MIME attachment. Use `AS4OutgoingAttachment.Builder` to construct.
+</ParamField>
+
+<ParamField path="body.receiverCertificate" type="X509Certificate">
+  The X.509 certificate of the receiver used for message encryption. Mutually exclusive with `receiverCertificateAlias`.
+</ParamField>
+
+<ParamField path="body.receiverCertificateAlias" type="String">
+  Alias into the crypto factory keystore identifying the receiver certificate. Mutually exclusive with `receiverCertificate`. Since 2.1.4.
+</ParamField>
+
+<ParamField path="body.forceMimeMessage" type="boolean" default="false">
+  Force the message to be wrapped in a MIME envelope even when there are no attachments. Since 2.5.1.
+</ParamField>
+
+<ParamField path="body.signalMsgConsumer" type="IAS4SignalMessageConsumer">
+  Optional callback receiving the synchronous AS4 Signal Message response.
+</ParamField>
+
+<ParamField path="body.signalMsgValidationResultHdl" type="IAS4SignalMessageValidationResultHandler">
+  Optional informational callback invoked after signal message reference validation. Since 3.0.1.
+</ParamField>
+
+### Attachment management
+
+```java
+// Add a single additional attachment
+builder.addAttachment(AS4OutgoingAttachment.builder()
+    .data(myBytes)
+    .mimeType(CMimeType.APPLICATION_XML)
+    .build());
+
+// Replace all attachments
+builder.attachments(attachment1, attachment2);
+
+// Clear and set a single attachment
+builder.attachment(singleAttachment);
+```
+
+### Message properties
+
+```java
+// Add a single property (accumulates)
+builder.addMessageProperty(
+    MessageProperty.builder().name("originalSender").value("urn:oasis:tc:ebcore:partyid-type:unregistered:C1")
+);
+
+// Replace all properties
+builder.messageProperties(prop1, prop2);
+```
+
+### Sending
+
+```java
+// Low-level: returns ESuccess
+ESuccess result = builder.sendMessage();
+
+// High-level: checks for a valid AS4 Receipt
+EAS4UserMessageSendResult result = builder.sendMessageAndCheckForReceipt();
+
+// High-level with exception consumer
+EAS4UserMessageSendResult result = builder.sendMessageAndCheckForReceipt(
+    ex -> LOGGER.error("Send failed", ex)
+);
+```
+
+## EAS4UserMessageSendResult
+
+Return value of `sendMessageAndCheckForReceipt()`.
+
+| Enum value | ID | Description | Retry feasible |
+|---|---|---|---|
+| `SUCCESS` | `success` | Receipt received — message delivered successfully | — |
+| `INVALID_PARAMETERS` | `invalid-parameters` | Mandatory builder fields were missing or incorrect | No |
+| `TRANSPORT_ERROR` | `transport-error` | Network or HTTP(S) level failure | Yes |
+| `TRANSPORT_ERROR_NO_RETRY` | `transport-error-no-retry` | Network/HTTP failure where retry is not recommended (since 3.2.0) | No |
+| `NO_SIGNAL_MESSAGE_RECEIVED` | `no-signal-msg-received` | No valid AS4 Signal Message in the response | Yes |
+| `AS4_ERROR_MESSAGE_RECEIVED` | `as4-error-msg-received` | AS4 Error Message returned by the other side | No |
+| `INVALID_SIGNAL_MESSAGE_RECEIVED` | `invalid-signal-message-received` | Signal Message contained neither error nor receipt | Yes |
+
+```java
+if (result.isSuccess()) {
+    // message delivered
+} else if (result.isRetryFeasible()) {
+    // consider retrying
+}
+```
+
+## BuilderPullRequest
+
+`BuilderPullRequest` extends `AbstractAS4PullRequestBuilder`. Available since 0.12.0.
+
+### Required fields
+
+<ParamField path="body.mpc" type="String" required>
+  The Message Partition Channel (MPC) to reference in the Pull Request.
+</ParamField>
+
+<ParamField path="body.endpointURL" type="String" required>
+  The destination AS4 endpoint URL.
+</ParamField>
+
+### Optional fields
+
+<ParamField path="body.pmode" type="IPMode">
+  The P-Mode to use. Optional.
+</ParamField>
+
+<ParamField path="body.pmodeID" type="String">
+  Optional PMode ID to include. Since 3.0.0.
+</ParamField>
+
+<ParamField path="body.useLeg1" type="boolean" default="true">
+  Whether to use Leg 1 (`true`) or Leg 2 (`false`) of the PMode. Since 2.7.8.
+</ParamField>
+
+<ParamField path="body.userMsgConsumer" type="IAS4UserMessageConsumer">
+  Optional consumer for the AS4 User Message received in response.
+</ParamField>
+
+<ParamField path="body.signalMsgConsumer" type="IAS4SignalMessageConsumer">
+  Optional consumer for the AS4 Signal Message received in response.
+</ParamField>
+
+## Complete example
+
+```java
+import com.helger.phase4.sender.AS4Sender;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.mime.CMimeType;
+
+EAS4UserMessageSendResult result = AS4Sender.builderUserMessage()
+    .cryptoFactorySign(cryptoFactory)
+    .cryptoFactoryCrypt(cryptoFactory)
+    .pmode(myPMode)
+    .fromPartyID("sender-party-id")
+    .fromRole(CAS4.DEFAULT_INITIATOR_URL)
+    .toPartyID("receiver-party-id")
+    .toRole(CAS4.DEFAULT_RESPONDER_URL)
+    .endpointURL("https://receiver.example.com/as4")
+    .receiverCertificate(receiverX509Cert)
+    .payload(
+        AS4OutgoingAttachment.builder()
+            .data(invoiceXmlBytes)
+            .mimeType(CMimeType.APPLICATION_XML)
+            .build()
+    )
+    .sendMessageAndCheckForReceipt();
+
+if (result.isSuccess()) {
+    System.out.println("Message sent successfully");
+} else {
+    System.err.println("Failed: " + result.getID());
+}
+```

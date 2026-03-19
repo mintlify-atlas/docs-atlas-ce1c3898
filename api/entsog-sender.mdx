@@ -1,0 +1,99 @@
+---
+title: Phase4ENTSOGSender
+description: ENTSOG AS4 profile sender for European natural gas transmission operator messages.
+---
+
+**Package:** `com.helger.phase4.entsog`  
+**Maven artifact:** `com.helger.phase4:phase4-entsog-client`
+
+`Phase4ENTSOGSender` sends AS4 messages conforming to the ENTSOG profile used by European natural gas transmission system operators. The builder applies ENTSOG-specific defaults automatically.
+
+## Factory method
+
+```java
+Phase4ENTSOGSender.ENTSOGUserMessageBuilder builder = Phase4ENTSOGSender.builder();
+```
+
+## Default settings applied by the builder
+
+| Setting | Value |
+|---|---|
+| AS4 profile | `entsog` |
+| Key identifier type (sign & crypt) | `ISSUER_SERIAL` |
+| Conversation ID | `""` (empty, must not be changed) |
+
+## ENTSOGUserMessageBuilder fields
+
+### Required fields
+
+<ParamField path="body.fromPartyID" type="String" required>
+  The sender AS4 party ID value.
+</ParamField>
+
+<ParamField path="body.fromRole" type="String" required>
+  The sender role.
+</ParamField>
+
+<ParamField path="body.toPartyID" type="String" required>
+  The receiver AS4 party ID value.
+</ParamField>
+
+<ParamField path="body.toRole" type="String" required>
+  The receiver role.
+</ParamField>
+
+<ParamField path="body.endpointURL" type="String" required>
+  The destination AS4 endpoint URL.
+</ParamField>
+
+<ParamField path="body.payload(AS4OutgoingAttachment.Builder, ENTSOGPayloadParams)" type="AS4OutgoingAttachment.Builder" required>
+  Set the payload. GZip compression is **automatically applied**. Pass `ENTSOGPayloadParams` to set EDIG@S payload type metadata.
+</ParamField>
+
+### Crypto overrides
+
+<ParamField path="body.encryptionKeyIdentifierType" type="ECryptoKeyIdentifierType">
+  Override the default encryption key identifier type (`ISSUER_SERIAL`).
+</ParamField>
+
+<ParamField path="body.signingKeyIdentifierType" type="ECryptoKeyIdentifierType">
+  Override the default signing key identifier type (`ISSUER_SERIAL`). Since 2.2.2.
+</ParamField>
+
+## ENTSOGPayloadParams
+
+Optional ENTSOG-specific parameters for the MIME part.
+
+<ParamField path="body.setDocumentType" type="String">
+  The EDIG@S document type code (e.g. `"01G"` for EDIG@S Nomination). Set as `EDIGASDocumentType` MIME part property.
+</ParamField>
+
+## Example
+
+```java
+import com.helger.phase4.entsog.Phase4ENTSOGSender;
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+
+Phase4ENTSOGSender.ENTSOGPayloadParams payloadParams =
+    new Phase4ENTSOGSender.ENTSOGPayloadParams();
+payloadParams.setDocumentType("01G"); // EDIG@S Nomination
+
+EAS4UserMessageSendResult result = Phase4ENTSOGSender.builder()
+    .cryptoFactorySign(cryptoFactory)
+    .cryptoFactoryCrypt(cryptoFactory)
+    .fromPartyID("21X-EU-A-A0A0A-A")
+    .fromRole("http://entsog.eu/as4/routing/AS4RoleShipper")
+    .toPartyID("21X-EU-B-B0B0B-B")
+    .toRole("http://entsog.eu/as4/routing/AS4RoleOperator")
+    .endpointURL("https://tso-receiver.example.com/as4")
+    .receiverCertificate(receiverCert)
+    .service("http://entsog.eu/as4/routing/noService")
+    .action("http://entsog.eu/as4/routing/noAction")
+    .payload(
+        AS4OutgoingAttachment.builder()
+            .data(ediGasMessageBytes)
+            .mimeTypeXML(),
+        payloadParams
+    )
+    .sendMessageAndCheckForReceipt();
+```

@@ -1,0 +1,148 @@
+---
+title: AS4CryptParams
+description: Encryption parameters for AS4 messages including algorithm, certificate, and session key configuration.
+---
+
+**Package:** `com.helger.phase4.crypto`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+`AS4CryptParams` holds all parameters required to encrypt an outgoing AS4 message or to decrypt an incoming message.
+
+## Default values
+
+| Constant | Value | Description |
+|---|---|---|
+| `DEFAULT_KEY_IDENTIFIER_TYPE` | `BST_DIRECT_REFERENCE` | Key identifier type |
+| `DEFAULT_KEY_ENCRYPTION_ALGORITHM` | `RSA_OAEP_XENC11` | Key transport algorithm |
+| `DEFAULT_MGF_ALGORITHM` | `SHA-256` | MGF algorithm for RSA-OAEP |
+| `DEFAULT_DIGEST_ALGORITHM` | `SHA-256` | Digest algorithm for RSA-OAEP |
+| `DEFAULT_SESSION_KEY_PROVIDER` | Random AES-128 | Session key provider |
+| `DEFAULT_ENCRYPT_SYMMETRIC_SESSION_KEY` | `true` | Include encrypted session key |
+
+## Setter methods
+
+<ParamField path="body.setKeyIdentifierType" type="ECryptoKeyIdentifierType" required>
+  How the recipient certificate is identified in the encrypted message. Default: `BST_DIRECT_REFERENCE`. Since 0.11.0.
+</ParamField>
+
+<ParamField path="body.setAlgorithmCrypt" type="ECryptoAlgorithmCrypt">
+  The symmetric encryption algorithm. **Mandatory to enable encryption.** Set to `null` to disable.
+</ParamField>
+
+<ParamField path="body.setKeyEncAlgorithm" type="ECryptoKeyEncryptionAlgorithm">
+  The key transport/wrapping algorithm. Default: `RSA_OAEP_XENC11`.
+</ParamField>
+
+<ParamField path="body.setMGFAlgorithm" type="String">
+  The Mask Generation Function (MGF) algorithm used with RSA-OAEP. Default: `SHA-256`.
+</ParamField>
+
+<ParamField path="body.setDigestAlgorithm" type="String">
+  The digest algorithm used with RSA-OAEP. Default: `SHA-256`.
+</ParamField>
+
+<ParamField path="body.setKeyAgreementMethod" type="ECryptoKeyAgreementMethod">
+  Key agreement method (e.g. `X25519`, `ECDH_ES`). When set, key agreement is used instead of key transport. `null` means key transport. Since 4.4.0.
+</ParamField>
+
+<ParamField path="body.setKeyDerivationMethod" type="ECryptoKeyDerivationMethod">
+  Key derivation function for use with key agreement (e.g. `HKDF`, `ConcatKDF`). Since 4.4.0.
+</ParamField>
+
+<ParamField path="body.setKeyWrapAlgorithm" type="ECryptoKeyWrapAlgorithm">
+  Key wrap algorithm for use with key agreement (e.g. `AES_128`). Since 4.4.0.
+</ParamField>
+
+<ParamField path="body.setCertificate" type="X509Certificate">
+  The recipient X.509 certificate for encryption. Overrides `setAlias`. If expired, a warning is logged but the certificate is still used.
+</ParamField>
+
+<ParamField path="body.setAlias" type="String">
+  Keystore alias for the recipient certificate. Overrides `setCertificate`.
+</ParamField>
+
+<ParamField path="body.setSessionKeyProvider" type="ICryptoSessionKeyProvider">
+  Provider for the symmetric session key. Defaults to random AES-128. Since 2.1.2.
+</ParamField>
+
+<ParamField path="body.setSecurityProvider" type="Provider">
+  Sets the same `java.security.Provider` for both encryption and decryption. Since 2.1.4.
+</ParamField>
+
+<ParamField path="body.setSecurityProviderEncrypt" type="Provider">
+  JCA/JCE provider for encryption only. Since 2.4.0.
+</ParamField>
+
+<ParamField path="body.setSecurityProviderDecrypt" type="Provider">
+  JCA/JCE provider for decryption only. Since 2.4.0.
+</ParamField>
+
+<ParamField path="body.setEncryptSymmetricSessionKey" type="boolean" default="true">
+  Whether to include the encrypted session key in the transmission. Since 2.1.4.
+</ParamField>
+
+<ParamField path="body.setWSSecEncryptCustomizer" type="IWSSecEncryptCustomizer">
+  Low-level customizer for WSS4J `WSSecEncrypt` objects.
+</ParamField>
+
+## Convenience methods
+
+```java
+// Sets X25519 + HKDF + AES-128 (eDelivery AS4 2.0 EdDSA/X25519)
+params.setEDelivery2KeyAgreementX25519();
+
+// Sets ECDH-ES + HKDF + AES-128 (eDelivery AS4 2.0 ECDSA/ECDH-ES)
+params.setEDelivery2KeyAgreementECDHES();
+
+// Set algorithm from a PMode security configuration
+params.setFromPMode(pmodeLeg.getSecurity());
+```
+
+## isCryptEnabled
+
+```java
+boolean enabled = params.isCryptEnabled(warningMsg -> LOGGER.warn(warningMsg));
+```
+
+Returns `true` only when an algorithm is set **and** at least one of `certificate` or `alias` is configured.
+
+## Static factory
+
+```java
+// Creates a default instance with AES-128-GCM
+AS4CryptParams defaults = AS4CryptParams.createDefault();
+```
+
+## ECryptoAlgorithmCrypt
+
+Symmetric encryption algorithms supported by phase4.
+
+| Enum value | ID | Algorithm URI | Notes |
+|---|---|---|---|
+| `CRYPT_3DES` | `3des` | Triple-DES CBC | Legacy |
+| `AES_128_CBC` | `aes128-cbc` | AES-128 CBC | |
+| `AES_128_GCM` | `aes128-gcm` | AES-128 GCM | **Default** |
+| `AES_192_CBC` | `aes192-cbc` | AES-192 CBC | |
+| `AES_192_GCM` | `aes192-gcm` | AES-192 GCM | |
+| `AES_256_CBC` | `aes256-cbc` | AES-256 CBC | |
+| `AES_256_GCM` | `aes256-gcm` | AES-256 GCM | |
+
+```java
+ECryptoAlgorithmCrypt.ENCRYPTION_ALGORITHM_DEFAULT // AES_128_GCM
+```
+
+## Example
+
+```java
+import com.helger.phase4.crypto.AS4CryptParams;
+import com.helger.phase4.crypto.ECryptoAlgorithmCrypt;
+
+// Basic encryption
+AS4CryptParams params = new AS4CryptParams()
+    .setAlgorithmCrypt(ECryptoAlgorithmCrypt.AES_128_GCM)
+    .setCertificate(receiverCert);
+
+// Using AS4CryptParams in a sender builder
+builder.cryptParams().setAlgorithmCrypt(ECryptoAlgorithmCrypt.AES_256_GCM);
+builder.cryptParams().setCertificate(receiverCert);
+```

@@ -1,0 +1,152 @@
+---
+title: BDEW Sending
+description: Send AS4 messages to the German energy sector network using Phase4BDEWSender with BDEW-specific crypto settings and payload parameters.
+---
+
+`Phase4BDEWSender` sends AS4 messages conforming to the BDEW (Bundesverband der Energie- und Wasserwirtschaft) AS4 profile used in the German energy market.
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-bdew-client</artifactId>
+  <version>x.y.z</version>
+</dependency>
+```
+
+## Basic example
+
+```java
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.io.File;
+
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.phase4.bdew.Phase4BDEWSender;
+import com.helger.phase4.bdew.Phase4BDEWSender.BDEWPayloadParams;
+import com.helger.phase4.crypto.ECryptoKeyIdentifierType;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+
+final byte[] aPayloadBytes =
+    Files.readAllBytes(new File("myDocument.xml").toPath());
+
+// Optional BDEW-specific payload parameters
+final BDEWPayloadParams aPayloadParams = new BDEWPayloadParams()
+    .setDocumentType("MSCONS")
+    .setDocumentDate(LocalDate.now())
+    .setDocumentNumber("1234")
+    .setFulfillmentDate(LocalDate.now().minusDays(1))
+    .setSubjectPartyId("9900123000002")
+    .setSubjectPartyRole("MSB")
+    .setApplicationReference("myApp");
+
+final EAS4UserMessageSendResult eResult =
+    Phase4BDEWSender.builder()
+        // Party identifiers
+        .fromPartyID("AS4-Sender")
+        .fromRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator")
+        .toPartyID("AS4-Receiver")
+        .toRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/responder")
+        // AS4 endpoint URL (BDEW uses static configuration, not SMP)
+        .endpointURL("https://receiver.example.org/bdew/as4")
+        .receiverCertificate(aReceiverX509Cert)
+        // Service and action
+        .service("urn:example:bdew:service")
+        .action("urn:example:bdew:action")
+        // Payload with BDEW-specific parameters
+        // GZip compression is enforced automatically
+        .payload(AS4OutgoingAttachment.builder()
+                                      .data(aPayloadBytes)
+                                      .mimeTypeXML()
+                                      .charset(StandardCharsets.UTF_8),
+                 aPayloadParams)
+        .sendMessageAndCheckForReceipt();
+
+if (eResult.isSuccess())
+    LOGGER.info("BDEW message delivered");
+```
+
+## BDEW profile specifics
+
+| Property | Default value |
+|---|---|
+| AS4 profile ID | `AS4BDEWProfileRegistarSPI.AS4_PROFILE_ID` |
+| Agreement reference | `BDEWPMode.DEFAULT_AGREEMENT_ID` |
+| Conversation ID | `""` (empty — must not be changed) |
+| MIME message | Always forced (`forceMimeMessage(true)`) |
+| Signing key identifier type | `BST_DIRECT_REFERENCE` |
+| Encryption key identifier type | `X509_SKI_KEY_IDENTIFIER` |
+| Key encryption algorithm | `ECDH_ES_KEYWRAP_AES_128` |
+| C14N algorithm | `C14N_EXCL_OMIT_COMMENTS` |
+| Payload compression | GZip enforced by `payload(Builder, BDEWPayloadParams)` |
+
+<Warning>
+  The `conversationID` field is fixed to an empty string per BDEW specification. Do not call `conversationID(String)` with a non-empty value or `isEveryRequiredFieldSet()` will return `false`.
+</Warning>
+
+## BDEWPayloadParams
+
+BDEW requires additional metadata to be embedded in the MIME attachment's part properties. Use `BDEWPayloadParams` to supply them:
+
+| Method | Attachment property | Description |
+|---|---|---|
+| `setDocumentType(String)` | `BDEWDocumentType` | BDEW document type code (e.g. `MSCONS`) |
+| `setDocumentDate(LocalDate)` | `BDEWDocumentDate` | Document creation date |
+| `setDocumentNumber(String)` | `BDEWDocumentNo` | Document number (also accepts `int`) |
+| `setFulfillmentDate(LocalDate)` | `BDEWFulfillmentDate` | Date the data applies to |
+| `setSubjectPartyId(String)` | `BDEWSubjectPartyID` | Party ID of the subject |
+| `setSubjectPartyRole(String)` | `BDEWSubjectPartyRole` | Role of the subject party |
+| `setApplicationReference(String)` | `BDEWApplicationReference` | Application reference string |
+
+`BDEWPayloadParams` is optional. If `null` is passed as the second argument to `payload()`, no extra part properties are added.
+
+## Crypto key identifier types
+
+Override the defaults if your trading partner requires different settings:
+
+```java
+import com.helger.phase4.crypto.ECryptoKeyIdentifierType;
+
+Phase4BDEWSender.builder()
+    .encryptionKeyIdentifierType(ECryptoKeyIdentifierType.X509_KEY_IDENTIFIER)
+    .signingKeyIdentifierType(ECryptoKeyIdentifierType.BST_DIRECT_REFERENCE)
+    ...
+```
+
+## Actions without payload
+
+The BDEW profile defines two special actions that do not require a payload:
+
+- `BDEWPMode.ACTION_REQUEST_SWITCH`
+- `BDEWPMode.ACTION_CONFIRM_SWITCH`
+
+When using these actions, omit the `payload()` call and phase4 will skip the payload validation:
+
+```java
+Phase4BDEWSender.builder()
+    .action(BDEWPMode.ACTION_REQUEST_SWITCH)
+    .fromPartyID(...)
+    ...
+    // No .payload() call needed
+    .sendMessageAndCheckForReceipt();
+```
+
+## Capturing the signal message
+
+```java
+import com.helger.base.wrapper.Wrapper;
+import com.helger.phase4.ebms3header.Ebms3SignalMessage;
+
+final Wrapper<Ebms3SignalMessage> aSignalMsgHolder = new Wrapper<>();
+
+Phase4BDEWSender.builder()
+    ...
+    .signalMsgConsumer((aSignalMsg, aMetadata, aState) ->
+        aSignalMsgHolder.set(aSignalMsg))
+    .sendMessageAndCheckForReceipt();
+
+// Inspect receipt
+if (aSignalMsgHolder.isSet() && aSignalMsgHolder.get().getReceipt() != null)
+    LOGGER.info("Receipt received");
+```

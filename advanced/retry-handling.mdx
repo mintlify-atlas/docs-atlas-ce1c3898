@@ -1,0 +1,136 @@
+---
+title: Retry Handling
+description: Configure AS4 message retries and reception awareness in phase4.
+---
+
+
+phase4 provides two orthogonal retry mechanisms: **PMode reception awareness** (AS4 protocol-level reliability) and **HTTP transport retries** (connection-level resilience).
+
+## PMode reception awareness
+
+Reception awareness is configured per-PMode via `PModeReceptionAwareness`. It governs the AS4 reliability layer: whether the sender should retry delivery when no receipt is received.
+
+### Default values
+
+| Property | Default |
+|----------|----------|
+| `receptionAwareness` | `true` |
+| `retry` | `true` |
+| `maxRetries` | `1` |
+| `retryIntervalMS` | `10000` (10 seconds) |
+| `duplicateDetection` | `true` |
+
+### Configuring PModeReceptionAwareness
+
+```java
+import com.helger.phase4.model.pmode.PModeReceptionAwareness;
+import com.helger.base.state.ETriState;
+
+// Enable reception awareness with 3 retries, 30-second interval
+PModeReceptionAwareness receptionAwareness = new PModeReceptionAwareness(
+    ETriState.TRUE,   // receptionAwareness enabled
+    ETriState.TRUE,   // retry enabled
+    3,                // maxRetries
+    30_000L,          // retryIntervalMS
+    ETriState.TRUE    // duplicateDetection enabled
+);
+```
+
+### Profile retry defaults
+
+Different profiles ship with different retry configurations:
+
+| Profile | Max retries | Retry interval |
+|---------|-------------|----------------|
+| Peppol | 1 | 10 seconds |
+| CEF | 1 | 10 seconds |
+| BDEW | 1 | 10 seconds |
+| ENTSOG | 1 | 10 seconds |
+| DBNAlliance | 5 | ~72 minutes (6h / 5) |
+
+## HTTP transport retries
+
+For connection-level retries (e.g. when the remote server is temporarily unavailable), phase4 provides `HttpRetrySettings`.
+
+### HttpRetrySettings
+
+```java
+import com.helger.phase4.messaging.http.HttpRetrySettings;
+import java.time.Duration;
+import java.math.BigDecimal;
+
+// Configure 3 transport retries with exponential backoff
+HttpRetrySettings retrySettings = new HttpRetrySettings()
+    .setMaxRetries(3)                              // retry up to 3 times
+    .setDurationBeforeRetry(Duration.ofSeconds(5)) // wait 5s before first retry
+    .setRetryIncreaseFactor(new BigDecimal("2.0"));// double the wait time each retry
+```
+
+The retry increase factor works as follows:
+
+- Retry 1: 5 seconds
+- Retry 2: 10 seconds  
+- Retry 3: 20 seconds
+
+A factor of `1.0` (the default) means no increase – fixed-interval retries.
+
+### Applying HTTP retry settings to a message builder
+
+```java
+// Using AbstractAS4UserMessageBuilder (or any derived builder)
+messageBuilder.httpRetrySettings(retrySettings);
+```
+
+### Default values
+
+| Property | Default |
+|----------|---------|
+| `maxRetries` | `0` (disabled) |
+| `durationBeforeRetry` | 10 seconds |
+| `retryIncreaseFactor` | `1.0` (no increase) |
+
+<Note>
+HTTP transport retries are disabled by default (`maxRetries = 0`). You must explicitly configure them if you want connection-level retry behaviour.
+</Note>
+
+## Retry try index in outgoing dumper
+
+When message dumping is enabled, the `IAS4OutgoingDumper.onBeginRequest(...)` method receives a `nTry` parameter:
+
+- `0` = initial attempt
+- `1` = first retry
+- `n` = nth retry
+
+This allows you to store each attempt as a separate dump file.
+
+## Reception awareness and duplicate detection
+
+When `duplicateDetection` is enabled in the PMode, phase4 automatically records incoming message IDs and rejects duplicates. This interacts with retries: if a message is successfully delivered but the receipt was lost, the sender may retry – and the duplicate detection on the receiver side will correctly identify and suppress the duplicate.
+
+```java
+// Duplicate detection is enabled in the default PMode for all built-in profiles:
+// ETriState eDuplicateDetection = ETriState.TRUE;
+```
+
+See the [Duplicate Detection](/advanced/duplicate-detection) page for configuration details.
+
+## Checking retry feasibility
+
+When sending messages, phase4 evaluates whether a retry is feasible based on the exception type. Transport errors (e.g. connection refused, timeout) are retryable. AS4 application-level errors (e.g. a received error signal message) are not.
+
+```java
+// Internally, the sender builder checks:
+// ex.isRetryFeasible() ? EAS4UserMessageSendResult.TRANSPORT_ERROR : ...
+```
+
+<Accordion title="PModeReceptionAwareness fields reference">
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `receptionAwareness` | `ETriState` | Whether reception awareness is active |
+| `retry` | `ETriState` | Whether retries are enabled |
+| `maxRetries` | `int` | Maximum number of retries (>= 0) |
+| `retryIntervalMS` | `long` | Milliseconds between retry attempts |
+| `duplicateDetection` | `ETriState` | Whether duplicate message IDs are rejected |
+
+</Accordion>

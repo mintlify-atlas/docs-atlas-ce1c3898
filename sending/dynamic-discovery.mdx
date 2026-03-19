@@ -1,0 +1,250 @@
+---
+title: Dynamic Discovery
+description: Resolve receiver endpoint URLs and AP certificates automatically at send time using IAS4EndpointDetailProvider implementations.
+---
+
+Instead of hard-coding the receiver's AS4 endpoint URL and certificate, phase4 supports **dynamic discovery**: endpoint details are resolved at send time by querying a metadata registry (SMP/SML). This is mandatory for Peppol and optional for CEF eDelivery networks.
+
+## The IAS4EndpointDetailProvider interface
+
+All endpoint resolution is abstracted behind `IAS4EndpointDetailProvider`:
+
+```java
+public interface IAS4EndpointDetailProvider {
+    /**
+     * Called once before any detail is queried.
+     * Implementations may cache the result internally.
+     */
+    void init(IDocumentTypeIdentifier aDocTypeID,
+              IProcessIdentifier aProcID,
+              IParticipantIdentifier aReceiverID) throws Phase4Exception;
+
+    /** @return Receiver AP certificate, or null if unavailable */
+    @Nullable
+    X509Certificate getReceiverAPCertificate() throws Phase4Exception;
+
+    /** @return Non-empty AS4 endpoint URL of the receiver */
+    @NonNull @Nonempty
+    String getReceiverAPEndpointURL() throws Phase4Exception;
+
+    /** @return Technical contact from the SMP record, or null (since 3.2.0) */
+    @Nullable
+    String getReceiverTechnicalContact() throws Phase4Exception;
+}
+```
+
+`init()` is guaranteed to be called before `getReceiverAPCertificate()` and `getReceiverAPEndpointURL()`. Implementations may cache the SMP result to avoid duplicate network calls.
+
+## Built-in providers
+
+### AS4EndpointDetailProviderPeppol — Peppol SMP lookup
+
+Looks up the receiver endpoint using a Peppol SMP client. This is the standard provider for all Peppol traffic.
+
+```java
+import com.helger.peppol.sml.ESML;
+import com.helger.phase4.dynamicdiscovery.AS4EndpointDetailProviderPeppol;
+import com.helger.smpclient.peppol.SMPClientReadOnly;
+
+final SMPClientReadOnly aSMPClient =
+    new SMPClientReadOnly(Phase4PeppolSender.URL_PROVIDER, aReceiverID, ESML.DIGIT_PRODUCTION);
+
+// Convenience factory — uses the same instance as both service group and service metadata provider
+final AS4EndpointDetailProviderPeppol aProvider =
+    AS4EndpointDetailProviderPeppol.create(aSMPClient);
+
+// Or plug directly into Phase4PeppolSender:
+Phase4PeppolSender.builder()
+    .smpClient(aSMPClient)   // shorthand for endpointDetailProvider(AS4EndpointDetailProviderPeppol.create(...))
+    ...
+```
+
+**Transport profile:** defaults to `ESMPTransportProfile.TRANSPORT_PROFILE_PEPPOL_AS4_V2`. Change it with:
+
+```java
+import com.helger.peppol.smp.ESMPTransportProfile;
+
+aProvider.setTransportProfile(ESMPTransportProfile.TRANSPORT_PROFILE_PEPPOL_AS4_V2);
+```
+
+**After `init()` has been called** you can inspect the raw endpoint entry:
+
+```java
+final EndpointType aEndpoint = aProvider.getEndpoint();
+```
+
+---
+
+### AS4EndpointDetailProviderBDXR — OASIS BDXR SMP v1 lookup
+
+Looks up the receiver endpoint using an OASIS BDXR SMP v1 client. Used for CEF eDelivery and similar networks.
+
+```java
+import com.helger.phase4.dynamicdiscovery.AS4EndpointDetailProviderBDXR;
+import com.helger.smpclient.bdxr1.BDXRClientReadOnly;
+
+final BDXRClientReadOnly aBDXRClient =
+    new BDXRClientReadOnly(Phase4CEFSender.URL_PROVIDER, aReceiverID, aSMLInfo);
+
+final AS4EndpointDetailProviderBDXR aProvider =
+    new AS4EndpointDetailProviderBDXR(aBDXRClient);
+
+// Plug directly into Phase4CEFSender:
+Phase4CEFSender.builder()
+    .smpClient(aBDXRClient)  // shorthand
+    ...
+```
+
+**Transport profile:** defaults to `ESMPTransportProfile.TRANSPORT_PROFILE_BDXR_AS4`. Change it:
+
+```java
+aProvider.setTransportProfile(ESMPTransportProfile.TRANSPORT_PROFILE_BDXR_AS4);
+```
+
+---
+
+### AS4EndpointDetailProviderConstant — static endpoint
+
+Holds a pre-configured certificate and URL. No network lookup is performed. Ideal for:
+- Integration tests
+- Point-to-point connections where the endpoint is known in advance
+- Re-using the result of a previous SMP lookup
+
+```java
+import com.helger.phase4.dynamicdiscovery.AS4EndpointDetailProviderConstant;
+
+// With optional technical contact
+final AS4EndpointDetailProviderConstant aProvider =
+    new AS4EndpointDetailProviderConstant(
+        aReceiverX509Cert,
+        "https://ap.receiver.example.org/as4",
+        "admin@receiver.example.org");
+
+// Or without technical contact
+final AS4EndpointDetailProviderConstant aProviderSimple =
+    new AS4EndpointDetailProviderConstant(
+        aReceiverX509Cert,
+        "https://ap.receiver.example.org/as4");
+
+// Shorthand available on most profile builders:
+Phase4PeppolSender.builder()
+    .receiverEndpointDetails(aReceiverX509Cert, "https://ap.receiver.example.org/as4")
+    ...
+```
+
+<Note>
+  `AS4EndpointDetailProviderConstant` logs a warning if the provided certificate is already expired or not yet valid, but it does not reject the certificate.
+</Note>
+
+---
+
+## Plugging a provider into a sender
+
+Every profile-specific sender exposes `endpointDetailProvider(IAS4EndpointDetailProvider)` as the generic hook. Convenience shortcuts exist for the most common cases:
+
+<Tabs>
+  <Tab title="Peppol">
+```java
+Phase4PeppolSender.builder()
+    // Shorthand — wraps SMPClientReadOnly in AS4EndpointDetailProviderPeppol
+    .smpClient(new SMPClientReadOnly(
+        Phase4PeppolSender.URL_PROVIDER, aReceiverID, ESML.DIGIT_PRODUCTION))
+
+    // Or: static endpoint (wraps in AS4EndpointDetailProviderConstant)
+    .receiverEndpointDetails(aReceiverCert, "https://...")
+
+    // Or: generic
+    .endpointDetailProvider(myCustomProvider)
+```
+  </Tab>
+  <Tab title="CEF eDelivery">
+```java
+Phase4CEFSender.builder()
+    // BDXR SMP v1 (wraps in AS4EndpointDetailProviderBDXR)
+    .smpClient(new BDXRClientReadOnly(
+        Phase4CEFSender.URL_PROVIDER, aReceiverID, aSMLInfo))
+
+    // BDXR SMP v2 (wraps in AS4EndpointDetailProviderBDXR2)
+    .smpClient(new BDXR2ClientReadOnly(aSmpBaseURL))
+
+    // Static endpoint
+    .receiverEndpointDetails(aReceiverCert, "https://...")
+
+    // Generic
+    .endpointDetailProvider(myCustomProvider)
+```
+  </Tab>
+  <Tab title="EUDAMED">
+```java
+Phase4EudamedSender.builder()
+    // Static endpoint
+    .receiverEndpointDetails(aReceiverCert, "https://...")
+
+    // Generic
+    .endpointDetailProvider(myCustomProvider)
+```
+  </Tab>
+  <Tab title="Generic AS4">
+```java
+// The generic AS4Sender manages the URL and certificate directly
+AS4Sender.builderUserMessage()
+    .endpointURL("https://ap.receiver.example.org/as4")
+    .receiverCertificate(aReceiverX509Cert)
+    // or
+    .receiverCertificateAlias("receiver-alias")
+```
+  </Tab>
+</Tabs>
+
+## Custom provider
+
+Implement `IAS4EndpointDetailProvider` to integrate any metadata directory:
+
+```java
+import com.helger.phase4.dynamicdiscovery.IAS4EndpointDetailProvider;
+
+public class MyCustomEndpointProvider implements IAS4EndpointDetailProvider {
+
+    private X509Certificate m_aCert;
+    private String m_sURL;
+
+    @Override
+    public void init(final IDocumentTypeIdentifier aDocTypeID,
+                     final IProcessIdentifier aProcID,
+                     final IParticipantIdentifier aReceiverID) throws Phase4Exception {
+        // Perform your lookup here — called once per send
+        final MyEndpointRecord rec = myDirectory.lookup(aReceiverID, aDocTypeID, aProcID);
+        if (rec == null)
+            throw new Phase4Exception("No endpoint found for " + aReceiverID.getURIEncoded());
+        m_aCert = rec.getCertificate();
+        m_sURL  = rec.getEndpointURL();
+    }
+
+    @Override
+    public X509Certificate getReceiverAPCertificate() { return m_aCert; }
+
+    @Override
+    public String getReceiverAPEndpointURL() { return m_sURL; }
+
+    @Override
+    public String getReceiverTechnicalContact() { return null; }
+}
+```
+
+Then use it:
+
+```java
+Phase4PeppolSender.builder()
+    .endpointDetailProvider(new MyCustomEndpointProvider())
+    ...
+```
+
+## Summary
+
+| Provider | Network | Transport |
+|---|---|---|
+| `AS4EndpointDetailProviderPeppol` | Peppol | NAPTR DNS + Peppol SMP |
+| `AS4EndpointDetailProviderBDXR` | CEF eDelivery | BDXL DNS + BDXR SMP v1 |
+| `AS4EndpointDetailProviderBDXR2` | CEF eDelivery | BDXL DNS + BDXR SMP v2 |
+| `AS4EndpointDetailProviderConstant` | Any | Static (no lookup) |
+| Custom `IAS4EndpointDetailProvider` | Any | Yours |

@@ -1,0 +1,231 @@
+---
+title: "Cryptography and WS-Security"
+description: "Configure signing and encryption in phase4 using WS-Security, AS4CryptoFactoryInMemoryKeyStore, AS4SigningParams, and AS4CryptParams."
+---
+
+## WS-Security in AS4
+
+AS4 uses the OASIS WS-Security standard to protect SOAP messages. phase4 delegates all cryptographic operations to the Apache WSS4J library, which implements WS-Security 1.0 and 1.1.
+
+Two security operations are applied to AS4 messages:
+
+| Operation | Purpose | Direction |
+|-----------|---------|----------|
+| **Signing** | Proves the message was sent by the claimed party and has not been altered | Outbound — sign with your private key; inbound — verify with sender's certificate |
+| **Encryption** | Ensures only the intended recipient can read the payload | Outbound — encrypt with receiver's public key; inbound — decrypt with your private key |
+
+<Info>
+  Signing and encryption are separate operations. A message can be signed only, encrypted only, both, or neither — depending on the profile and PMode security settings.
+</Info>
+
+## The IAS4CryptoFactory interface
+
+`IAS4CryptoFactory` is the central crypto abstraction in phase4. It provides:
+
+- A WSS4J `Crypto` object for signing and verification operations
+- Access to the signing key store and private key entry
+- Access to the trust store for validating inbound signatures
+
+```java
+public interface IAS4CryptoFactory {
+    // Returns the WSS4J Crypto instance for the given mode (sign or encrypt)
+    Crypto getCrypto(ECryptoMode eCryptoMode);
+
+    // Returns the key store backing this factory
+    KeyStore getKeyStore();
+
+    // Returns the private key entry (alias + key + certificate chain)
+    KeyStore.PrivateKeyEntry getPrivateKeyEntry();
+
+    // Returns the alias used to look up the private key
+    String getKeyAlias();
+
+    // Returns the key password for the given alias
+    char[] getKeyPasswordPerAliasCharArray(String sSearchKeyAlias);
+
+    // Returns the trust store (for validating inbound certificates)
+    KeyStore getTrustStore();
+}
+```
+
+phase4 ships two ready-to-use implementations:
+
+<CardGroup cols={2}>
+  <Card title="AS4CryptoFactoryInMemoryKeyStore" icon="key">
+    Accepts `KeyStore` objects you load programmatically. Nothing is read from disk at construction time. Use this when you manage key stores in your application.
+  </Card>
+  <Card title="AS4CryptoFactoryConfiguration" icon="file-code">
+    Reads key store path, alias, and password from the global phase4 configuration file (`phase4.properties` / `application.properties`). Suitable for file-based deployments.
+  </Card>
+</CardGroup>
+
+## Configuring AS4CryptoFactoryInMemoryKeyStore
+
+Use `AS4CryptoFactoryInMemoryKeyStore` when you load key stores from your application's classpath, a database, or a secrets manager.
+
+```java
+// Load your key store (PKCS12 or JKS)
+KeyStore keyStore = KeyStore.getInstance("PKCS12");
+try (InputStream is = getClass().getResourceAsStream("/my-keystore.p12")) {
+    keyStore.load(is, "keystore-password".toCharArray());
+}
+
+// Load your trust store (contains trusted CA certificates)
+KeyStore trustStore = KeyStore.getInstance("JKS");
+try (InputStream ts = getClass().getResourceAsStream("/my-truststore.jks")) {
+    trustStore.load(ts, "truststore-password".toCharArray());
+}
+
+// Create the factory
+IAS4CryptoFactory cryptoFactory = new AS4CryptoFactoryInMemoryKeyStore(
+    keyStore,
+    "my-key-alias",               // alias of the private key entry
+    "key-password".toCharArray(), // password for that key entry
+    trustStore                    // null to fall back to JRE cacerts
+);
+```
+
+You can also pass `IKeyStoreAndKeyDescriptor` and `ITrustStoreDescriptor` descriptors from the `com.helger.security.keystore` package if you use the helger security infrastructure:
+
+```java
+IAS4CryptoFactory cryptoFactory = new AS4CryptoFactoryInMemoryKeyStore(
+    keyStoreAndKeyDescriptor,   // IKeyStoreAndKeyDescriptor
+    trustStoreDescriptor        // ITrustStoreDescriptor (nullable)
+);
+```
+
+<Warning>
+  `AS4CryptoFactoryInMemoryKeyStore` is `@Immutable` — all state is set at construction time. Create a new instance if you need to rotate certificates.
+</Warning>
+
+## Configuring signing parameters
+
+`AS4SigningParams` holds all settings that control how outbound messages are signed and how inbound signatures are verified.
+
+### ECryptoAlgorithmSign — signature algorithms
+
+| Enum constant | Algorithm URI |
+|---------------|---------------|
+| `RSA_SHA_256` (default) | `http://www.w3.org/2001/04/xmldsig-more#rsa-sha256` |
+| `RSA_SHA_384` | `http://www.w3.org/2001/04/xmldsig-more#rsa-sha384` |
+| `RSA_SHA_512` | `http://www.w3.org/2001/04/xmldsig-more#rsa-sha512` |
+| `ECDSA_SHA_256` | `http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256` |
+| `ECDSA_SHA_384` | `http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384` |
+| `ECDSA_SHA_512` | `http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha512` |
+| `EDDSA_ED25519` | EdDSA Ed25519 |
+| `EDDSA_ED448` | EdDSA Ed448 |
+| `RSA_SHA_256_MGF1` | RSA-PSS SHA-256 |
+| `RSA_SHA_512_MGF1` | RSA-PSS SHA-512 |
+
+### ECryptoAlgorithmSignDigest — digest algorithms
+
+| Enum constant | Algorithm URI |
+|---------------|---------------|
+| `DIGEST_SHA_256` (default) | `http://www.w3.org/2001/04/xmlenc#sha256` |
+| `DIGEST_SHA_384` | SHA-384 |
+| `DIGEST_SHA_512` | SHA-512 |
+
+### Configuring AS4SigningParams
+
+```java
+// Use the built-in defaults (RSA-SHA256 + SHA-256 digest)
+AS4SigningParams signingParams = AS4SigningParams.createDefault();
+
+// Or configure explicitly
+AS4SigningParams signingParams = new AS4SigningParams()
+    .setAlgorithmSign(ECryptoAlgorithmSign.RSA_SHA_256)
+    .setAlgorithmSignDigest(ECryptoAlgorithmSignDigest.DIGEST_SHA_256)
+    .setAlgorithmC14N(ECryptoAlgorithmC14N.C14N_ALGORITHM_DEFAULT)
+    .setKeyIdentifierType(ECryptoKeyIdentifierType.BST_DIRECT_REFERENCE);
+
+// For Peppol — single certificate BST value type (#X509v3)
+signingParams.setUseSingleCertificate(true);
+
+// Check if signing is enabled (both algorithm and digest must be set)
+boolean enabled = signingParams.isSigningEnabled();
+```
+
+<Tip>
+  Call `AS4SigningParams.createDefault()` to get a pre-configured instance using `ECryptoAlgorithmSign.SIGN_ALGORITHM_DEFAULT` (RSA_SHA_256) and `ECryptoAlgorithmSignDigest.SIGN_DIGEST_ALGORITHM_DEFAULT` (DIGEST_SHA_256). This matches the most common AS4 deployments.
+</Tip>
+
+## Configuring encryption parameters
+
+`AS4CryptParams` holds all settings that control outbound payload encryption.
+
+### ECryptoAlgorithmCrypt — symmetric encryption algorithms
+
+| Enum constant | Key size | Mode |
+|---------------|----------|------|
+| `AES_128_GCM` (default) | 128-bit | GCM |
+| `AES_256_GCM` | 256-bit | GCM |
+| `AES_128_CBC` | 128-bit | CBC |
+| `AES_192_CBC` | 192-bit | CBC |
+| `AES_256_CBC` | 256-bit | CBC |
+| `AES_192_GCM` | 192-bit | GCM |
+| `CRYPT_3DES` | 168-bit | CBC (legacy) |
+
+### Configuring AS4CryptParams
+
+```java
+// Use the built-in default (AES-128-GCM)
+AS4CryptParams cryptParams = AS4CryptParams.createDefault();
+
+// Or configure explicitly — requires an algorithm plus either an alias or certificate
+AS4CryptParams cryptParams = new AS4CryptParams()
+    .setAlgorithmCrypt(ECryptoAlgorithmCrypt.AES_128_GCM)
+    .setAlias("receiver-certificate-alias"); // alias in the key/trust store
+
+// Alternatively, set the recipient certificate directly
+AS4CryptParams cryptParams = new AS4CryptParams()
+    .setAlgorithmCrypt(ECryptoAlgorithmCrypt.AES_128_GCM)
+    .setCertificate(receiverX509Certificate);
+
+// Key transport algorithm (used to encrypt the symmetric session key)
+cryptParams.setKeyEncAlgorithm(ECryptoKeyEncryptionAlgorithm.RSA_OAEP_XENC11);
+
+// Check if encryption is enabled
+boolean enabled = cryptParams.isCryptEnabled(warning -> System.out.println(warning));
+```
+
+### Key agreement (eDelivery AS4 2.0)
+
+For profiles that use key agreement instead of key transport (e.g. eDelivery AS4 2.0 with X25519 or ECDH-ES), use the convenience methods:
+
+```java
+// X25519 key agreement with HKDF + AES-128 key wrap
+cryptParams.setEDelivery2KeyAgreementX25519();
+
+// ECDH-ES key agreement with HKDF + AES-128 key wrap
+cryptParams.setEDelivery2KeyAgreementECDHES();
+```
+
+## Trust store configuration
+
+The trust store contains the CA certificates used to validate inbound signatures. If you pass `null` as the trust store to `AS4CryptoFactoryInMemoryKeyStore`, phase4 falls back to the JRE's default `cacerts` trust store.
+
+```java
+// Explicit trust store
+new AS4CryptoFactoryInMemoryKeyStore(keyStore, alias, password, trustStore);
+
+// Rely on JRE cacerts (null trust store)
+new AS4CryptoFactoryInMemoryKeyStore(keyStore, alias, password, null);
+```
+
+<Warning>
+  Network-specific trust stores (such as the Peppol SMP root CA) are not in the JRE cacerts. Always provide an explicit trust store when connecting to closed networks.
+</Warning>
+
+## Applying crypto settings from a PMode
+
+If you have a `PModeLegSecurity` object (from a PMode leg), you can populate `AS4SigningParams` and `AS4CryptParams` directly from it:
+
+```java
+PModeLegSecurity security = pMode.getLeg1().getSecurity();
+
+AS4SigningParams signingParams = new AS4SigningParams()
+    .setFromPMode(security); // reads X509SignatureAlgorithm + X509SignatureHashFunction
+
+AS4CryptParams cryptParams = new AS4CryptParams()
+    .setFromPMode(security); // reads X509EncryptionAlgorithm
+```

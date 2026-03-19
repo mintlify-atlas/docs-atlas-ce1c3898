@@ -1,0 +1,202 @@
+---
+title: Crypto factory
+description: IAS4CryptoFactory interface and implementations for keystores and configuration-based crypto in phase4.
+---
+
+**Package:** `com.helger.phase4.crypto`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+phase4 uses a crypto factory abstraction to load keystores and provide WSS4J `Crypto` instances for signing, signature verification, encryption, and decryption.
+
+## IAS4CryptoFactory
+
+The central interface for all crypto operations in phase4.
+
+### Interface methods
+
+<ResponseField name="getCrypto(ECryptoMode)" type="Crypto">
+  Returns a WSS4J `Crypto` instance. The `ECryptoMode` parameter is `ENCRYPT_OR_SIGN` or `DECRYPT_OR_VERIFY`. Never `null`.
+</ResponseField>
+
+<ResponseField name="getKeyStore()" type="KeyStore">
+  Returns the underlying key store, or `null` if unavailable.
+</ResponseField>
+
+<ResponseField name="getPrivateKeyEntry()" type="KeyStore.PrivateKeyEntry">
+  Returns the private key entry from the keystore, or `null` if unavailable.
+</ResponseField>
+
+<ResponseField name="getKeyAlias()" type="String">
+  Returns the keystore alias identifying the private key entry. May be `null`.
+</ResponseField>
+
+<ResponseField name="getKeyPasswordPerAliasCharArray(String)" type="char[]">
+  Returns the key password for a given alias as a `char[]`, or `null`. Since 3.0.0.
+</ResponseField>
+
+<ResponseField name="getKeyPasswordPerAlias(String)" type="String">
+  Convenience default method returning the key password as `String`. Since 1.4.1.
+</ResponseField>
+
+<ResponseField name="getTrustStore()" type="KeyStore">
+  Returns the trust store, or `null` if none is configured. Since 0.12.0.
+</ResponseField>
+
+## AS4CryptoFactoryInMemoryKeyStore
+
+Implementation that accepts a pre-loaded `KeyStore` directly, without reading from a file at runtime.
+
+**Class:** `com.helger.phase4.crypto.AS4CryptoFactoryInMemoryKeyStore`  
+Since 0.9.7.
+
+### Constructors
+
+```java
+// From descriptors (since 3.0.0)
+new AS4CryptoFactoryInMemoryKeyStore(
+    IKeyStoreAndKeyDescriptor aKeyStoreDesc,   // required
+    ITrustStoreDescriptor aTrustStoreDesc      // nullable
+)
+
+// From raw KeyStore objects
+new AS4CryptoFactoryInMemoryKeyStore(
+    KeyStore aKeyStore,      // required
+    String sKeyAlias,        // required, non-empty
+    char[] aKeyPassword,     // required (may be empty)
+    KeyStore aTrustStore     // nullable - if null, JRE cacerts is used
+)
+```
+
+<ParamField path="body.aKeyStore" type="KeyStore" required>
+  The key store containing the signing/encryption private key and certificate.
+</ParamField>
+
+<ParamField path="body.sKeyAlias" type="String" required>
+  The alias of the private key entry in the key store.
+</ParamField>
+
+<ParamField path="body.aKeyPassword" type="char[]" required>
+  The password for the private key entry. May be an empty array for password-less keys.
+</ParamField>
+
+<ParamField path="body.aTrustStore" type="KeyStore">
+  An optional trust store containing trusted CA certificates. When `null`, the JRE default `cacerts` file is used for trust verification.
+</ParamField>
+
+### Methods
+
+```java
+KeyStore ks         = factory.getKeyStore();
+String alias        = factory.getKeyAlias();
+KeyStore trustStore = factory.getTrustStore(); // nullable
+char[] pwd          = factory.getKeyPasswordPerAliasCharArray("my-alias");
+```
+
+### Example: load from file
+
+```java
+import com.helger.phase4.crypto.AS4CryptoFactoryInMemoryKeyStore;
+import java.security.KeyStore;
+
+KeyStore ks = KeyStore.getInstance("JKS");
+try (InputStream is = new FileInputStream("/path/to/keystore.jks")) {
+    ks.load(is, "keystorepass".toCharArray());
+}
+
+IAS4CryptoFactory factory = new AS4CryptoFactoryInMemoryKeyStore(
+    ks,
+    "my-key-alias",
+    "keypassword".toCharArray(),
+    null  // use JRE cacerts for trust
+);
+```
+
+## AS4CryptoFactoryConfiguration
+
+Extends `AS4CryptoFactoryInMemoryKeyStore`. Reads key store and trust store configuration from the helger-config `IConfigWithFallback`. Supports different configuration property prefixes to run multiple crypto contexts.
+
+**Class:** `com.helger.phase4.crypto.AS4CryptoFactoryConfiguration`  
+Since 3.0.0.
+
+### Static factory methods
+
+```java
+// Load with default config and default prefix "phase4.crypto."
+AS4CryptoFactoryConfiguration factory = AS4CryptoFactoryConfiguration.getDefaultInstance();
+
+// Returns null instead of throwing if config is incomplete
+AS4CryptoFactoryConfiguration factory = AS4CryptoFactoryConfiguration.getDefaultInstanceOrNull();
+```
+
+### Constructors
+
+```java
+// Using current global config with default prefix
+new AS4CryptoFactoryConfiguration(IConfigWithFallback aConfig)
+
+// Using current global config with a custom prefix
+new AS4CryptoFactoryConfiguration(IConfigWithFallback aConfig, String sConfigPrefix)
+
+// Custom prefix + control error logging
+new AS4CryptoFactoryConfiguration(
+    IConfigWithFallback aConfig,
+    String sConfigPrefix,
+    boolean bLogError
+)
+```
+
+<ParamField path="body.aConfig" type="IConfigWithFallback" required>
+  The configuration source from which key store properties are read.
+</ParamField>
+
+<ParamField path="body.sConfigPrefix" type="String">
+  Configuration property prefix. Must end with a dot. Defaults to `phase4.crypto.` (via `CAS4Crypto.DEFAULT_CONFIG_PREFIX`).
+</ParamField>
+
+<ParamField path="body.bLogError" type="boolean" default="true">
+  Whether to log an error if key store loading fails.
+</ParamField>
+
+### Configuration properties
+
+Using the default prefix `phase4.crypto.`:
+
+```properties
+# Key store
+phase4.crypto.keystore.type=JKS
+phase4.crypto.keystore.path=/path/to/keystore.jks
+phase4.crypto.keystore.password=keystorepass
+phase4.crypto.keystore.key.alias=my-alias
+phase4.crypto.keystore.key.password=keypass
+
+# Trust store (optional)
+phase4.crypto.truststore.type=JKS
+phase4.crypto.truststore.path=/path/to/truststore.jks
+phase4.crypto.truststore.password=trustpass
+```
+
+### Methods
+
+```java
+IKeyStoreAndKeyDescriptor desc      = factory.getKeyStoreDescriptor();
+ITrustStoreDescriptor trustDesc     = factory.getTrustStoreDescriptor();
+```
+
+### Example: two crypto contexts
+
+```java
+// Signing factory with prefix "sign."
+IAS4CryptoFactory signFactory = new AS4CryptoFactoryConfiguration(
+    AS4Configuration.getConfig(), "sign."
+);
+
+// Encryption factory with prefix "crypt."
+IAS4CryptoFactory cryptFactory = new AS4CryptoFactoryConfiguration(
+    AS4Configuration.getConfig(), "crypt."
+);
+
+// Use separately in a sender
+builder
+    .cryptoFactorySign(signFactory)
+    .cryptoFactoryCrypt(cryptFactory);
+```

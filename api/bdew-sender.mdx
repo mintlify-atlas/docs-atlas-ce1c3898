@@ -1,0 +1,137 @@
+---
+title: Phase4BDEWSender
+description: BDEW AS4 profile sender for energy market messages in Germany.
+---
+
+**Package:** `com.helger.phase4.bdew`  
+**Maven artifact:** `com.helger.phase4:phase4-bdew-client`
+
+`Phase4BDEWSender` sends AS4 messages conforming to the German BDEW energy market profile. The builder sets BDEW-specific defaults automatically (ECDH-ES key transport, BST Direct Reference signing, forced MIME message).
+
+## Factory method
+
+```java
+Phase4BDEWSender.BDEWUserMessageBuilder builder = Phase4BDEWSender.builder();
+```
+
+## Default settings applied by the builder
+
+| Setting | Value |
+|---|---|
+| AS4 profile | `bdew` |
+| Key identifier type (sign) | `BST_DIRECT_REFERENCE` |
+| Key identifier type (crypt) | `X509_SKI_KEY_IDENTIFIER` |
+| Key encryption algorithm | `ECDH_ES_KEYWRAP_AES_128` |
+| Encrypt symmetric session key | `false` |
+| C14N algorithm | Exclusive C14N without comments |
+| BST value type | `#X509PKIPathv1` (chain) |
+| Conversation ID | `""` (empty, must not be changed) |
+| Agreement ref | BDEW default agreement ID |
+| Force MIME message | `true` |
+
+## BDEWUserMessageBuilder fields
+
+### Required fields
+
+<ParamField path="body.fromPartyID" type="String" required>
+  The sender AS4 party ID value.
+</ParamField>
+
+<ParamField path="body.fromRole" type="String" required>
+  The sender role.
+</ParamField>
+
+<ParamField path="body.toPartyID" type="String" required>
+  The receiver AS4 party ID value.
+</ParamField>
+
+<ParamField path="body.toRole" type="String" required>
+  The receiver role.
+</ParamField>
+
+<ParamField path="body.endpointURL" type="String" required>
+  The destination AS4 endpoint URL.
+</ParamField>
+
+<ParamField path="body.payload(AS4OutgoingAttachment.Builder, BDEWPayloadParams)" type="AS4OutgoingAttachment.Builder" required>
+  Set the payload. GZip compression is **automatically applied**. Optionally pass `BDEWPayloadParams` for BDEW-specific MIME part properties.
+</ParamField>
+
+### Crypto overrides
+
+<ParamField path="body.encryptionKeyIdentifierType" type="ECryptoKeyIdentifierType">
+  Override the default encryption key identifier type (`X509_SKI_KEY_IDENTIFIER`).
+</ParamField>
+
+<ParamField path="body.signingKeyIdentifierType" type="ECryptoKeyIdentifierType">
+  Override the default signing key identifier type (`BST_DIRECT_REFERENCE`).
+</ParamField>
+
+## BDEWPayloadParams
+
+Optional BDEW-specific part properties added to the payload MIME part.
+
+<ParamField path="body.setDocumentType" type="String">
+  BDEW document type string. Set as `BDEWDocumentType` MIME part property.
+</ParamField>
+
+<ParamField path="body.setDocumentDate" type="LocalDate">
+  Document date. Set as `BDEWDocumentDate` MIME part property.
+</ParamField>
+
+<ParamField path="body.setDocumentNumber(String)" type="String">
+  Document number. Set as `BDEWDocumentNo` MIME part property.
+</ParamField>
+
+<ParamField path="body.setDocumentNumber(int)" type="int">
+  Document number as integer, converted to string. Since 2.1.2.
+</ParamField>
+
+<ParamField path="body.setFulfillmentDate" type="LocalDate">
+  Fulfillment date. Set as `BDEWFulfillmentDate` MIME part property.
+</ParamField>
+
+<ParamField path="body.setSubjectPartyId" type="String">
+  Subject party ID. Set as `BDEWSubjectPartyID` MIME part property.
+</ParamField>
+
+<ParamField path="body.setSubjectPartyRole" type="String">
+  Subject party role. Set as `BDEWSubjectPartyRole` MIME part property.
+</ParamField>
+
+<ParamField path="body.setApplicationReference" type="String">
+  Application reference. Set as `BDEWApplicationReference` MIME part property. Since 3.0.1.
+</ParamField>
+
+## Example
+
+```java
+import com.helger.phase4.bdew.Phase4BDEWSender;
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import java.time.LocalDate;
+
+Phase4BDEWSender.BDEWPayloadParams payloadParams =
+    new Phase4BDEWSender.BDEWPayloadParams()
+        .setDocumentType("UTILMD")
+        .setDocumentDate(LocalDate.now())
+        .setDocumentNumber("1001");
+
+EAS4UserMessageSendResult result = Phase4BDEWSender.builder()
+    .cryptoFactorySign(cryptoFactory)
+    .cryptoFactoryCrypt(cryptoFactory)
+    .fromPartyID("9912345678901")
+    .fromRole("urn:bdew.de:as4:scheme:MSB")
+    .toPartyID("9900000000001")
+    .toRole("urn:bdew.de:as4:scheme:LF")
+    .endpointURL("https://receiver.example.com/as4")
+    .receiverCertificate(receiverCert)
+    .service("urn:bdew.de:as4:service:energymarket")
+    .action("urn:bdew.de:as4:action:metering")
+    .payload(
+        AS4OutgoingAttachment.builder()
+            .data(ediMessageBytes)
+            .mimeTypeText(),
+        payloadParams
+    )
+    .sendMessageAndCheckForReceipt();
+```

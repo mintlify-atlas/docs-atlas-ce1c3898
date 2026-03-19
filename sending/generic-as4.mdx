@@ -1,0 +1,246 @@
+---
+title: Generic AS4 Sending
+description: Send AS4 user messages and pull requests without any profile-specific defaults using AS4Sender.
+---
+
+`AS4Sender` is the low-level entry point for sending AS4 messages when no built-in profile applies. It does **not** set any profile-specific defaults — every field must be configured explicitly.
+
+<Note>
+  If you are sending to a Peppol, CEF eDelivery, BDEW, ENTSOG, or EUDAMED network, prefer the [profile-specific senders](/sending/overview) instead. They pre-configure the correct crypto algorithms, PModes, and mandatory message properties for you.
+</Note>
+
+## Dependency
+
+The generic sender is part of the core `phase4-lib` module.
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-lib</artifactId>
+  <version>x.y.z</version>
+</dependency>
+```
+
+## Sending a user message
+
+### Required fields
+
+The following fields **must** be set before calling `sendMessage()` or `sendMessageAndCheckForReceipt()`:
+
+| Field | Setter | Description |
+|---|---|---|
+| AS4 profile ID | `as4ProfileID(String)` | Identifies the PMode configuration |
+| Crypto factory | `cryptoFactory(IAS4CryptoFactory)` | Used for both signing and encryption |
+| HTTP client factory | `httpClientFactory(HttpClientFactory)` | HTTP transport settings |
+| Endpoint URL | `endpointURL(String)` | Destination AS4 endpoint |
+| From party ID | `fromPartyID(String)` | Sender party identifier |
+| From role | `fromRole(String)` | Sender role URI |
+| To party ID | `toPartyID(String)` | Receiver party identifier |
+| To role | `toRole(String)` | Receiver role URI |
+
+### Complete example
+
+```java
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.phase4.sender.AS4Sender;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+
+final EAS4UserMessageSendResult eResult =
+    AS4Sender.builderUserMessage()
+             // Crypto configuration
+             .cryptoFactory(AS4CryptoFactoryConfiguration.getDefaultInstanceOrNull())
+             // Message routing
+             .endpointURL("https://receiver.example.org/as4")
+             .receiverCertificate(aReceiverX509Cert)
+             // Party identifiers
+             .fromPartyID("sender-party")
+             .fromRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator")
+             .toPartyID("receiver-party")
+             .toRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/responder")
+             // AS4 collaboration info
+             .service("urn:example:services", "OrderProcessing")
+             .action("urn:example:actions:SubmitOrder")
+             .agreementRef("https://example.org/agreements/v1")
+             // Payload (becomes the first MIME attachment)
+             .payload(AS4OutgoingAttachment.builder()
+                                          .data(aPayloadBytes)
+                                          .mimeTypeXML())
+             .sendMessageAndCheckForReceipt();
+
+if (eResult.isSuccess())
+    LOGGER.info("Message delivered");
+else
+    LOGGER.error("Send failed: " + eResult.getID());
+```
+
+### Optional fields
+
+```java
+AS4Sender.builderUserMessage()
+    // Override conversation ID (random by default)
+    .conversationID("my-conversation-42")
+    // Optional message ID (random UUID by default)
+    .messageID("unique-msg-id@example.org")
+    // Reference a prior message ID
+    .refToMessageID("prior-msg-id@example.org")
+    // Party ID type (scheme)
+    .fromPartyIDType("urn:oasis:names:tc:ebcore:partyid-type:unregistered")
+    .toPartyIDType("urn:oasis:names:tc:ebcore:partyid-type:unregistered")
+    // AgreementRef type attribute
+    .agreementType("T1")
+    // Force MIME message wrapping even without attachments
+    .forceMimeMessage(true)
+    // Locale for internal error messages
+    .locale(Locale.US)
+    ...
+```
+
+## Adding attachments
+
+The payload passed to `.payload()` becomes the first MIME attachment. Additional attachments can be appended with `.addAttachment()`:
+
+```java
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+
+AS4Sender.builderUserMessage()
+    // Primary payload
+    .payload(AS4OutgoingAttachment.builder()
+                                  .data(aInvoiceBytes)
+                                  .mimeTypeXML()
+                                  .charset(StandardCharsets.UTF_8))
+    // Additional attachment — e.g. a PDF
+    .addAttachment(AS4OutgoingAttachment.builder()
+                                        .data(aPdfBytes)
+                                        .mimeType(CMimeType.APPLICATION_PDF)
+                                        .compressionGZIP())
+    ...
+```
+
+The `AS4OutgoingAttachment.Builder` supports:
+- `.data(byte[])` / `.data(File)` / `.data(IHasInputStream, String)`
+- `.mimeTypeXML()` / `.mimeType(IMimeType)`
+- `.charset(Charset)`
+- `.compressionGZIP()` / `.compression(EAS4CompressionMode)`
+- `.contentID(String)` — custom Content-ID header
+
+## Message properties
+
+EB-MS 3.0 message properties (the `<MessageProperties>` element) can be added with the `addMessageProperty` or `messageProperties` methods:
+
+```java
+import com.helger.phase4.model.MessageProperty;
+
+AS4Sender.builderUserMessage()
+    .addMessageProperty(MessageProperty.builder()
+                                       .name("originalSender")
+                                       .type("urn:oasis:names:tc:ebcore:partyid-type:unregistered")
+                                       .value("sender-value"))
+    .addMessageProperty(MessageProperty.builder()
+                                       .name("finalRecipient")
+                                       .type("urn:oasis:names:tc:ebcore:partyid-type:unregistered")
+                                       .value("receiver-value"))
+    ...
+```
+
+## Handling the response
+
+### Via sendMessageAndCheckForReceipt
+
+This is the simplest approach — it internally sets a signal message consumer that captures the receipt and returns a structured result:
+
+```java
+final EAS4UserMessageSendResult eResult =
+    builder.sendMessageAndCheckForReceipt(ex -> LOGGER.error("Send exception", ex));
+
+switch (eResult) {
+    case SUCCESS -> handleSuccess();
+    case TRANSPORT_ERROR, NO_SIGNAL_MESSAGE_RECEIVED, INVALID_SIGNAL_MESSAGE_RECEIVED ->
+        scheduleRetry();
+    default -> handlePermanentFailure(eResult);
+}
+```
+
+### Via signalMsgConsumer
+
+For more control, register a `IAS4SignalMessageConsumer` and call `sendMessage()`:
+
+```java
+import com.helger.base.wrapper.Wrapper;
+import com.helger.phase4.ebms3header.Ebms3SignalMessage;
+
+final Wrapper<Ebms3SignalMessage> aSignalMsgHolder = new Wrapper<>();
+
+AS4Sender.builderUserMessage()
+    ...
+    .signalMsgConsumer((aSignalMsg, aMetadata, aState) ->
+        aSignalMsgHolder.set(aSignalMsg))
+    .sendMessage();
+
+if (aSignalMsgHolder.get() != null && aSignalMsgHolder.get().getReceipt() != null) {
+    // success
+}
+```
+
+### Raw HTTP response
+
+To inspect the raw HTTP response bytes, provide a `IAS4RawResponseConsumer`:
+
+```java
+import com.helger.phase4.sender.IAS4RawResponseConsumer;
+
+AS4Sender.builderUserMessage()
+    ...
+    .rawResponseConsumer(aResponseMsg -> {
+        // aResponseMsg.getResponse() contains the raw byte[]
+        LOGGER.debug("HTTP status: " + aResponseMsg.getResponse());
+    })
+    ...
+```
+
+## Sending a pull request
+
+Use `AS4Sender.builderPullRequest()` to initiate a pull (retrieve messages from a queue):
+
+```java
+import com.helger.phase4.sender.AS4Sender;
+
+AS4Sender.builderPullRequest()
+         .cryptoFactory(AS4CryptoFactoryConfiguration.getDefaultInstanceOrNull())
+         .endpointURL("https://receiver.example.org/as4")
+         .mpc("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/defaultMPC")
+         .pmode(aMyPMode)
+         // Consume the pulled user message
+         .userMsgConsumer((aUserMsg, aMetadata, aState) -> {
+             // process aUserMsg
+         })
+         .sendMessage();
+```
+
+### Pull request fields
+
+| Field | Setter | Required | Description |
+|---|---|---|---|
+| Endpoint URL | `endpointURL(String)` | Yes | AS4 endpoint to pull from |
+| MPC | `mpc(String)` | Yes | Message partition channel |
+| PMode | `pmode(IPMode)` | Recommended | PMode governing the exchange |
+| PMode leg | `useLeg1(boolean)` | No | Default: leg 1 |
+| User msg consumer | `userMsgConsumer(IAS4UserMessageConsumer)` | No | Callback for the pulled message |
+| Signal msg consumer | `signalMsgConsumer(IAS4SignalMessageConsumer)` | No | Callback for signal messages |
+
+## Interrupting the send
+
+Implement `IAS4SenderInterrupt` to implement a circuit-breaker that prevents sending after all validation checks have passed but before the HTTP call is made:
+
+```java
+import com.helger.base.state.EContinue;
+import com.helger.phase4.sender.IAS4SenderInterrupt;
+
+final IAS4SenderInterrupt aInterrupt = () -> circuitBreakerIsOpen
+    ? EContinue.BREAK
+    : EContinue.CONTINUE;
+
+AS4Sender.builderUserMessage()
+    ...
+    .senderInterrupt(aInterrupt)
+    ...
+```

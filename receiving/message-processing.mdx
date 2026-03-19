@@ -1,0 +1,247 @@
+---
+title: Message Processing
+description: Understand the incoming message lifecycle, IAS4IncomingMessageMetadata, duplicate detection, receipt generation, and error handling.
+---
+
+## Processing lifecycle
+
+Every incoming HTTP POST follows these stages:
+
+<Steps>
+  <Step title="Metadata capture">
+    `AS4XServletHandler.createIncomingMessageMetadata()` creates an `AS4IncomingMessageMetadata` object populated with transport-level data: remote IP, host, port, authenticated user, cookies, HTTP headers, and any TLS client certificates.
+  </Step>
+  <Step title="SOAP / MIME parsing">
+    `AS4IncomingHandler.parseAS4Message()` reads the `Content-Type` header. For `multipart/related` it splits the MIME parts: the first part is the SOAP envelope, subsequent parts are attachments. For plain SOAP the entire body is parsed as XML.
+  </Step>
+  <Step title="SOAP header processing">
+    Each registered `ISoapHeaderElementProcessor` is invoked in order. The WSS4J processor verifies the WS-Security signature and decrypts the payload. The EBMS3 processor extracts the `eb:Messaging` header into the message state.
+  </Step>
+  <Step title="Profile validation">
+    If an AS4 profile is active (e.g. Peppol), the validator checks P-Mode compliance, user message structure, and initiator identity against the signing certificate.
+  </Step>
+  <Step title="Attachment decompression">
+    Compressed attachments (GZIP via AS4 compression feature) are transparently decompressed. The `MimeType` part property is used to restore the original MIME type.
+  </Step>
+  <Step title="Duplicate detection">
+    The message ID is checked against the in-memory duplicate store. Duplicate messages are rejected with an EBMS error. The store is cleaned up periodically by `AS4DuplicateCleanupJob` according to `phase4.incoming.duplicatedisposalminutes`.
+  </Step>
+  <Step title="SPI dispatch">
+    All registered `IAS4IncomingMessageProcessorSPI` implementations are called. For user messages `processAS4UserMessage()` is invoked; for signal messages (receipts, errors, pull-requests) `processAS4SignalMessage()` is invoked.
+  </Step>
+  <Step title="Receipt / error response">
+    On success, phase4 constructs a signed AS4 Receipt signal and returns it synchronously in the HTTP response body. On failure, an AS4 Error signal is returned. The outgoing response is also passed to `processAS4ResponseMessage()` on each SPI.
+  </Step>
+</Steps>
+
+## IAS4IncomingMessageMetadata
+
+`IAS4IncomingMessageMetadata` carries transport-level information about one incoming request. It is passed to every SPI callback so your handler can log, audit, or make routing decisions based on connection properties.
+
+```java
+public interface IAS4IncomingMessageMetadata {
+
+    // A UUID generated for this request — NOT the AS4 message ID
+    String getIncomingUniqueID();
+
+    // Timestamp when the request arrived
+    OffsetDateTime getIncomingDT();
+
+    // EAS4MessageMode.REQUEST or .RESPONSE
+    EAS4MessageMode getMode();
+
+    // Sender IP address (may be null when behind a proxy)
+    String getRemoteAddr();
+
+    // Sender hostname (may be null)
+    String getRemoteHost();
+
+    // Sender TCP port (negative if not set)
+    int getRemotePort();
+
+    // Authenticated user, if any
+    String getRemoteUser();
+
+    // TLS client certificates presented by the sender (mTLS)
+    ICommonsList<X509Certificate> remoteTlsCerts();
+
+    // Cookies from the HTTP request
+    ICommonsList<Cookie> cookies();
+
+    // Copy of all incoming HTTP headers
+    HttpHeaderMap getAllHttpHeaders();
+
+    // AS4 message ID of the request (null for incoming requests, set on responses)
+    String getRequestMessageID();
+
+    // HTTP status code set on the response (<=0 if not set yet)
+    int getResponseHttpStatusCode();
+}
+```
+
+### Accessing metadata in a handler
+
+```java
+@Override
+public AS4MessageProcessorResult processAS4UserMessage(
+        IAS4IncomingMessageMetadata aMessageMetadata,
+        HttpHeaderMap aHttpHeaders,
+        Ebms3UserMessage aUserMessage,
+        IPMode aPMode,
+        Node aPayload,
+        ICommonsList<WSS4JAttachment> aIncomingAttachments,
+        IAS4IncomingMessageState aIncomingState,
+        AS4ErrorList aProcessingErrorMessages) {
+
+    // Internal unique ID for this request — useful for log correlation
+    String uniqueID = aMessageMetadata.getIncomingUniqueID();
+
+    // Sender's IP address
+    String senderIP = aMessageMetadata.getRemoteAddr();
+
+    // Sender's TLS certificate (when mutual TLS is configured)
+    if (aMessageMetadata.hasRemoteTlsCerts()) {
+        X509Certificate tlsCert = aMessageMetadata.remoteTlsCerts().getFirst();
+        // ...
+    }
+
+    // AS4 message ID from the EBMS3 header
+    String as4MessageID = aUserMessage.getMessageInfo().getMessageId();
+
+    return AS4MessageProcessorResult.createSuccess();
+}
+```
+
+## Accessing the SBDH payload (Peppol)
+
+For Peppol messages, `Phase4PeppolServletMessageProcessorSPI` extracts the Standard Business Document (SBD) from the first attachment and calls your `IPhase4PeppolIncomingSBDHandlerSPI` with the pre-parsed objects.
+
+```java
+@Override
+public void handleIncomingSBD(
+        IAS4IncomingMessageMetadata aMessageMetadata,
+        HttpHeaderMap aHeaders,
+        Ebms3UserMessage aUserMessage,
+        byte[] aSBDBytes,                  // raw decompressed bytes
+        StandardBusinessDocument aSBD,     // JAXB model
+        PeppolSBDHData aPeppolSBD,          // Peppol-specific header fields
+        IAS4IncomingMessageState aState,
+        AS4ErrorList aProcessingErrorMessages) throws Exception {
+
+    // Peppol participant identifiers
+    IParticipantIdentifier sender   = aPeppolSBD.getSenderAsIdentifier();
+    IParticipantIdentifier receiver = aPeppolSBD.getReceiverAsIdentifier();
+
+    // Document type and process identifiers
+    IDocumentTypeIdentifier docType = aPeppolSBD.getDocumentTypeAsIdentifier();
+    IProcessIdentifier      process = aPeppolSBD.getProcessAsIdentifier();
+
+    // Country code of the C1 (original sender)
+    String countryC1 = aPeppolSBD.getCountryC1();
+
+    // The XML business document is inside the SBD payload
+    // Use SBDMarshaller to serialize back if needed:
+    // new SBDMarshaller().write(aSBD, outputStream);
+
+    // Signing certificate of C2 (the sending AP)
+    X509Certificate signingCert = aState.getSigningCertificate();
+}
+```
+
+## Duplicate detection
+
+phase4 automatically tracks AS4 message IDs. If the same message ID arrives a second time, it is rejected with an EBMS error (`EBMS:0202 - Other`) and no SPI callbacks are invoked.
+
+The duplicate store is backed by the `MetaAS4Manager` and cleaned up by `AS4DuplicateCleanupJob`. The retention period is controlled by:
+
+```properties
+# How long (in minutes) to keep incoming message IDs for duplicate detection
+# Default: 0 (disabled, all messages kept until restart)
+phase4.incoming.duplicatedisposalminutes=10080
+```
+
+The cleanup job is started by `AS4ServerInitializer.initAS4Server()` and stopped by `AS4ServerInitializer.shutdownAS4Server()`.
+
+## Receipt generation
+
+Receipts are generated automatically by `AS4RequestHandler` when:
+
+1. The incoming message is a user message (not a signal message).
+2. The P-Mode specifies a reply pattern that requires a synchronous receipt.
+3. All `IAS4IncomingMessageProcessorSPI` implementations return a success result.
+
+The receipt is a signed AS4 `eb:SignalMessage` containing an `eb:Receipt` element. It is written directly into the HTTP response of the same connection.
+
+Your SPI can inspect the outgoing receipt via `processAS4ResponseMessage()`:
+
+```java
+@Override
+public void processAS4ResponseMessage(
+        IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+        IAS4IncomingMessageState aIncomingState,
+        String sResponseMessageID,
+        byte[] aResponseBytes,
+        boolean bResponsePayloadIsAvailable,
+        AS4ErrorList aEbmsErrorMessages) {
+
+    if (aEbmsErrorMessages.isEmpty()) {
+        // A receipt was sent — log the outgoing message ID
+        log.info("Sent receipt " + sResponseMessageID);
+    } else {
+        // An error signal was sent instead
+        for (var err : aEbmsErrorMessages) {
+            log.warn("Sent error: " + err.getErrorDescription());
+        }
+    }
+}
+```
+
+## Error handling
+
+### Returning an EBMS error from a SPI
+
+Add errors to the `aProcessingErrorMessages` list and return `AS4MessageProcessorResult.createFailure()`:
+
+```java
+@Override
+public AS4MessageProcessorResult processAS4UserMessage(
+        IAS4IncomingMessageMetadata aMessageMetadata,
+        HttpHeaderMap aHttpHeaders,
+        Ebms3UserMessage aUserMessage,
+        IPMode aPMode,
+        Node aPayload,
+        ICommonsList<WSS4JAttachment> aIncomingAttachments,
+        IAS4IncomingMessageState aIncomingState,
+        AS4ErrorList aProcessingErrorMessages) {
+
+    if (!isValidPayload(aPayload)) {
+        aProcessingErrorMessages.add(
+            EEbmsError.EBMS_OTHER
+                .errorBuilder(aIncomingState.getLocale())
+                .refToMessageInError(aUserMessage.getMessageInfo().getMessageId())
+                .errorDetail("Payload failed business validation")
+                .build());
+        return AS4MessageProcessorResult.createFailure();
+    }
+
+    return AS4MessageProcessorResult.createSuccess();
+}
+```
+
+### Throwing an exception
+
+Throwing any exception from an SPI method is treated as a failure. phase4 logs the exception and returns an EBMS error signal to the sender.
+
+For Peppol handlers, throwing from `handleIncomingSBD()` produces the same result — the AS4 layer catches it and converts it into an `EBMS_OTHER` error.
+
+### HTTP error responses
+
+Phase4 maps internal errors to HTTP status codes as follows:
+
+| Condition | HTTP status |
+|---|---|
+| `Phase4Exception` (bad request) | 400 Bad Request |
+| SOAP `mustUnderstand` header not processed | 500 (per SOAP spec) |
+| Any other unhandled exception | 500 Internal Server Error |
+
+A well-formed AS4 error signal always results in HTTP 200 — the EBMS error is carried inside the response body, not in the HTTP status code.

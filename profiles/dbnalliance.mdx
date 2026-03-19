@@ -1,0 +1,126 @@
+---
+title: DBNAlliance Profile
+description: AS4 profile for North American B2B e-commerce (Digital Business Networks Alliance).
+---
+
+
+DBNAlliance (Digital Business Networks Alliance) is a North American standards body for B2B e-commerce. Its AS4 profile is designed for interoperable document exchange between trading partners in North America.
+
+<CardGroup cols={2}>
+  <Card title="Maven Artifact" icon="box">
+    `phase4-profile-dbnalliance`
+  </Card>
+  <Card title="Profile ID" icon="fingerprint">
+    `dbnalliance`
+  </Card>
+</CardGroup>
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-profile-dbnalliance</artifactId>
+  <version>4.4.1-SNAPSHOT</version>
+</dependency>
+```
+
+## Overview
+
+The DBNAlliance profile uses one-way/push messaging, similar to the Peppol profile, but with several key differences:
+
+- Uses **SOAP 1.2** explicitly (not just the AS4 default)
+- Uses **AES-256-GCM** encryption (stronger than the 128-bit used by other profiles)
+- Configures **5 retries** spread across a 6-hour window
+- Uses its own agreement and party type URIs
+
+## PMode structure
+
+```java
+import com.helger.phase4.profile.dbnalliance.DBNAlliancePMode;
+import com.helger.phase4.model.pmode.IPModeIDProvider;
+
+PMode pMode = DBNAlliancePMode.createDBNAlliancePMode(
+    "your-access-point-id",
+    "receiver-access-point-id",
+    "https://receiver.example.com/as4",
+    IPModeIDProvider.DEFAULT_DYNAMIC,
+    true  // persist
+);
+```
+
+| Parameter | Value |
+|-----------|-------|
+| MEP | One-Way |
+| MEP Binding | Push |
+| SOAP version | SOAP 1.2 (explicit) |
+| Agreement ID | `https://dbnalliance.org/agreements/access_point.html` |
+| Party type | `http://docs.oasis-open.org/bdxr/AS4/1` |
+
+## Security requirements
+
+<Warning>
+DBNAlliance uses **AES-256-GCM** for encryption, not AES-128-GCM. This is enforced by `DBNAllianceCompatibilityValidator`.
+</Warning>
+
+| Setting | Required value |
+|---------|----------------|
+| Signature algorithm | `RSA_SHA_256` |
+| Signature hash function | `SHA-256` |
+| Encryption algorithm | `AES-256-GCM` (`http://www.w3.org/2009/xmlenc11#aes256-gcm`) |
+| WSS version | `1.1.1` |
+| PModeAuthorize | `false` |
+| Receipt reply pattern | `Response` |
+| Non-repudiation | `true` |
+
+## AgreementRef and PartyInfo
+
+- `CollaborationInfo/AgreementRef` value must be `https://dbnalliance.org/agreements/access_point.html`
+- `CollaborationInfo/AgreementRef/@type` must NOT be set
+- `PartyInfo/From[0]/@type` must be `http://docs.oasis-open.org/bdxr/AS4/1`
+- `PartyInfo/To[0]/@type` must be `http://docs.oasis-open.org/bdxr/AS4/1`
+
+## Reception awareness and retries
+
+DBNAlliance has a significantly different retry configuration compared to other profiles:
+
+```java
+// From DBNAlliancePMode.generatePModeReceptionAwareness():
+// receptionAwareness = true
+// retry = true
+// maxRetries = 5
+// retryIntervalMS = (6 hours / 5 retries) in ms = 4_320_000 ms (72 minutes per retry)
+// duplicateDetection = true
+```
+
+This spreads the 5 retry attempts over a 6-hour total window with equal intervals.
+
+## HTTP client settings
+
+`Phase4DBNAllianceHttpClientSettings` provides suitable defaults:
+
+| Setting | Value |
+|---------|-------|
+| TLS version | TLS 1.2 (minimum) |
+| Connection request timeout | 1 second |
+| Connect timeout | 5 seconds |
+| Response timeout | 100 seconds |
+
+```java
+import com.helger.phase4.profile.dbnalliance.Phase4DBNAllianceHttpClientSettings;
+
+Phase4DBNAllianceHttpClientSettings httpSettings = new Phase4DBNAllianceHttpClientSettings();
+```
+
+## CRL checking
+
+The DBNAlliance profile module includes `DBNAllianceCRLDownloader` for Certificate Revocation List (CRL) checking, supporting proper certificate validation for the DBNAlliance PKI.
+
+## Error handling
+
+DBNAlliance requires all three error reporting flags:
+
+- `ErrorHandling.Report.AsResponse` = `true`
+- `ErrorHandling.Report.ProcessErrorNotifyConsumer` = `true`
+- `ErrorHandling.Report.ProcessErrorNotifyProducer` = `true`
+- `ErrorHandling.Report.DeliveryFailuresNotifyProducer` = `true` (mandatory, not just recommended)

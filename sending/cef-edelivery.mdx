@@ -1,0 +1,147 @@
+---
+title: CEF eDelivery Sending
+description: Send AS4 messages using the CEF four-corner profile with Phase4CEFSender, supporting BDXR SMP v1 and v2 discovery.
+---
+
+`Phase4CEFSender` sends AS4 messages conforming to the CEF eDelivery four-corner AS4 profile. It is also used for networks built on the same profile, such as TOOP.
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-cef-client</artifactId>
+  <version>x.y.z</version>
+</dependency>
+```
+
+## Basic example
+
+```java
+import com.helger.peppol.sml.ISMLInfo;
+import com.helger.peppolid.IParticipantIdentifier;
+import com.helger.peppolid.simple.participant.SimpleParticipantIdentifier;
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.phase4.cef.Phase4CEFSender;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+import com.helger.smpclient.bdxr1.BDXRClientReadOnly;
+
+final IParticipantIdentifier aReceiverID =
+    Phase4CEFSender.IF.createParticipantIdentifier("iso6523-actorid-upis", "9915:receiver");
+
+final EAS4UserMessageSendResult eResult =
+    Phase4CEFSender.builder()
+        // Participant identifiers (set originalSender / finalRecipient properties)
+        .senderParticipantID(
+            Phase4CEFSender.IF.createParticipantIdentifier("iso6523-actorid-upis", "9914:sender"))
+        .receiverParticipantID(aReceiverID)
+        // Document and process type
+        .documentTypeID(
+            Phase4CEFSender.IF.createDocumentTypeIdentifier(
+                "toop-doctypeid-qns",
+                "urn:eu:toop:ns:dataexchange-1p40::Response##urn:eu.toop.response.registeredorganization::1.40"))
+        .processID(
+            Phase4CEFSender.IF.createProcessIdentifier(
+                "toop-procid-agreement",
+                "urn:eu.toop.process.datarequestresponse"))
+        // Party IDs in the EBMS User Message
+        .fromPartyID(new SimpleParticipantIdentifier("type", "POP000306"))
+        .fromRole("http://www.toop.eu/edelivery/gateway")
+        .toPartyID(new SimpleParticipantIdentifier("type", "POP000306"))
+        .toRole("http://www.toop.eu/edelivery/gateway")
+        // Payload
+        .payload(AS4OutgoingAttachment.builder()
+                                      .data(aPayloadBytes)
+                                      .mimeTypeXML())
+        // SMP lookup (BDXR v1)
+        .smpClient(new BDXRClientReadOnly(
+            Phase4CEFSender.URL_PROVIDER, aReceiverID, aSMLInfo))
+        .sendMessageAndCheckForReceipt();
+```
+
+## CEF profile specifics
+
+- The profile ID used internally is the CEF four-corner profile (`AS4CEFProfileRegistarSPI.AS4_PROFILE_ID_FOUR_CORNER`).
+- `originalSender` and `finalRecipient` message properties are added automatically from `senderParticipantID` and `receiverParticipantID`.
+- By default the `type` attribute is emitted on those properties. Disable it with `.useOriginalSenderFinalRecipientTypeAttr(false)` for networks that don't expect the attribute.
+- The `CEFUserMessageBuilder` inherits all fields from `AbstractAS4UserMessageBuilderMIMEPayload` (payload, attachments, crypto, …).
+
+## Party ID variants
+
+`fromPartyID` and `toPartyID` accept either an `IParticipantIdentifier` (sets both type and value) or the individual string setters inherited from the base builder:
+
+```java
+// Using IParticipantIdentifier — sets type (scheme) and value together
+.fromPartyID(Phase4CEFSender.IF.createParticipantIdentifier("scheme", "value"))
+
+// Using raw strings from the base builder — set type and value separately
+.fromPartyIDType("urn:oasis:names:tc:ebcore:partyid-type:unregistered")
+.fromPartyID("sender-party-value")
+```
+
+## Endpoint discovery
+
+<Tabs>
+  <Tab title="BDXR SMP v1">
+```java
+import com.helger.smpclient.bdxr1.BDXRClientReadOnly;
+
+.smpClient(new BDXRClientReadOnly(
+    Phase4CEFSender.URL_PROVIDER,  // BDXLURLProvider.INSTANCE
+    aReceiverID,
+    aSMLInfo))
+```
+  </Tab>
+  <Tab title="BDXR SMP v2">
+```java
+import com.helger.smpclient.bdxr2.BDXR2ClientReadOnly;
+
+.smpClient(new BDXR2ClientReadOnly(aSmpBaseURL))
+```
+  </Tab>
+  <Tab title="Static (testing)">
+```java
+// Provide certificate and URL directly — skips SMP lookup
+.receiverEndpointDetails(aReceiverX509Cert, "https://ap.receiver.example.org/as4")
+```
+  </Tab>
+  <Tab title="Custom provider">
+```java
+.endpointDetailProvider(myCustomProvider)
+```
+  </Tab>
+</Tabs>
+
+## Observing discovery results
+
+```java
+Phase4CEFSender.builder()
+    // Inspect the AP certificate returned by the SMP
+    .certificateConsumer(cert -> LOGGER.info("AP cert subject: " + cert.getSubjectX500Principal()))
+    // Inspect the resolved endpoint URL
+    .endointURLConsumer(url -> LOGGER.info("Sending to: " + url))
+    ...
+```
+
+<Note>
+  Note the intentional typo in the source: the method is `endointURLConsumer` (missing 'p'), matching the actual API.
+</Note>
+
+## Static endpoint without SMP
+
+For testing or point-to-point integrations where the endpoint is known in advance:
+
+```java
+Phase4CEFSender.builder()
+    .senderParticipantID(...)
+    .receiverParticipantID(...)
+    .documentTypeID(...)
+    .processID(...)
+    .fromPartyID(...)
+    .fromRole(...)
+    .toPartyID(...)
+    .toRole(...)
+    .payload(AS4OutgoingAttachment.builder().data(aPayloadBytes).mimeTypeXML())
+    .receiverEndpointDetails(aReceiverCert, "https://ap.receiver.example.org/as4")
+    .sendMessageAndCheckForReceipt();
+```

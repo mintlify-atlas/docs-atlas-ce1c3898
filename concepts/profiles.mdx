@@ -1,0 +1,208 @@
+---
+title: "AS4 profiles overview"
+description: "Understand what AS4 profiles are, which profiles phase4 supports, and how to register and configure them."
+---
+
+## What is an AS4 profile?
+
+An AS4 profile is a set of constraints layered on top of the base AS4 specification. While AS4 defines the general message format and security framework, a profile narrows the choices — mandating specific signature algorithms, encryption strengths, party identifier formats, service/action values, and PMode defaults.
+
+Examples of constraints a profile can impose:
+
+- Which signing algorithm to use (e.g. RSA-SHA256 or ECDSA-SHA256)
+- Whether encryption is required or optional
+- The exact format of party identifiers (e.g. `iso6523-actorid-upis::0088:...`)
+- Which SOAP version to use
+- Whether receipts must be sent and how (synchronous or asynchronous)
+
+## IAS4Profile interface
+
+All profiles implement the `IAS4Profile` interface:
+
+```java
+public interface IAS4Profile extends IHasID<String>, IHasDisplayName {
+
+    // Returns the profile's unique string identifier (e.g. "peppol", "cef")
+    String getID();
+
+    // Returns the human-readable display name (e.g. "Peppol", "CEF (four corner)")
+    String getDisplayName();
+
+    // Returns an optional compatibility validator, or null if no validation is performed
+    IAS4ProfileValidator getValidator();
+
+    // Creates a PMode template for the given parties and address.
+    // The returned PMode is NOT registered in the manager yet.
+    PMode createPModeTemplate(
+        String sInitiatorID,
+        String sResponderID,
+        String sAddress         // nullable
+    );
+
+    // Returns the PMode ID provider for this profile
+    IPModeIDProvider getPModeIDProvider();
+
+    // Returns true if this profile is deprecated
+    boolean isDeprecated();
+
+    // Returns true if Ping messages should be passed to the SPI handler
+    boolean isInvokeSPIForPingMessage();
+}
+```
+
+## Supported profiles
+
+<CardGroup cols={2}>
+  <Card title="Peppol" icon="globe">
+    **Profile ID:** `peppol`\
+    **Module:** `phase4-profile-peppol`\
+    Used on the Pan-European Public Procurement Online (PEPPOL) network for electronic invoicing, ordering, and catalogue exchange.
+  </Card>
+  <Card title="CEF eDelivery (four corner)" icon="building-columns">
+    **Profile ID:** `cef`\
+    **Module:** `phase4-profile-cef`\
+    European Commission Connecting Europe Facility four-corner model. Also used for EUDAMED.
+  </Card>
+  <Card title="CEF eDelivery (two corner)" icon="building-columns">
+    **Profile ID:** `cef-two-corner`\
+    **Module:** `phase4-profile-cef`\
+    Variant of the CEF profile for two-party exchanges without intermediate access points.
+  </Card>
+  <Card title="BDEW" icon="bolt">
+    **Profile ID:** `bdew`\
+    **Module:** `phase4-profile-bdew`\
+    German energy sector data exchange standard (Bundesverband der Energie- und Wasserwirtschaft).
+  </Card>
+  <Card title="ENTSOG" icon="fire">
+    **Profile ID:** `entsog`\
+    **Module:** `phase4-profile-entsog`\
+    European Network of Transmission System Operators for Gas — cross-border gas transport data exchange.
+  </Card>
+  <Card title="EuCTP Push" icon="arrows-up-down">
+    **Profile ID:** `euctp-push`\
+    **Module:** `phase4-profile-euctp`\
+    EU Customs Trade Platform — push variant.
+  </Card>
+  <Card title="EuCTP Pull" icon="arrows-up-down">
+    **Profile ID:** `euctp-pull`\
+    **Module:** `phase4-profile-euctp`\
+    EU Customs Trade Platform — pull variant.
+  </Card>
+  <Card title="DBNAlliance" icon="handshake">
+    **Profile ID:** `dbnalliance`\
+    **Module:** `phase4-profile-dbnalliance`\
+    North American B2B document exchange network (Digital Business Networks Alliance).
+  </Card>
+  <Card title="HRE-Delivery" icon="file-user">
+    **Profile ID:** `hredelivery`\
+    **Module:** `phase4-profile-hredelivery`\
+    HR electronic delivery profile.
+  </Card>
+  <Card title="eDelivery AS4 2.0 EdDSA" icon="shield-halved">
+    **Profile ID:** `edelivery2-eddsa` / `edelivery2-eddsa-two-corner`\
+    **Module:** `phase4-profile-edelivery2`\
+    Next-generation eDelivery profile using EdDSA (Ed25519/Ed448) signatures and X25519 key agreement.
+  </Card>
+  <Card title="eDelivery AS4 2.0 ECDSA" icon="shield-halved">
+    **Profile ID:** `edelivery2-ecdsa` / `edelivery2-ecdsa-two-corner`\
+    **Module:** `phase4-profile-edelivery2`\
+    Next-generation eDelivery profile using ECDSA signatures and ECDH-ES key agreement.
+  </Card>
+</CardGroup>
+
+<Note>
+  EUDAMED uses the CEF four-corner profile (`cef`). The `phase4-eudamed-client` module provides EUDAMED-specific sender helpers on top of the CEF profile.
+</Note>
+
+## Profile registration via SPI
+
+Profiles are discovered at startup using the Java `ServiceLoader` mechanism (SPI). Each profile module places a `META-INF/services/com.helger.phase4.profile.IAS4ProfileRegistrarSPI` file on the classpath that points to its registrar class.
+
+The `AS4ProfileManager` calls all discovered `IAS4ProfileRegistrarSPI` implementations during initialization:
+
+```java
+// IAS4ProfileRegistrarSPI — implemented once per profile module
+public interface IAS4ProfileRegistrarSPI {
+    void registerAS4Profile(IAS4ProfileRegistrar aRegistrar);
+}
+```
+
+### Writing a custom profile registrar
+
+If you need a custom profile, implement `IAS4ProfileRegistrarSPI` and register it:
+
+```java
+public final class MyProfileRegistarSPI implements IAS4ProfileRegistrarSPI {
+
+    public static final String AS4_PROFILE_ID = "my-custom-profile";
+    public static final String AS4_PROFILE_NAME = "My Custom Profile";
+
+    @Override
+    public void registerAS4Profile(@NonNull final IAS4ProfileRegistrar aRegistrar) {
+        final IAS4ProfilePModeProvider pModeProvider =
+            (initiatorID, responderID, address) ->
+                MyCustomPMode.createPMode(initiatorID, responderID, address);
+
+        aRegistrar.registerProfile(
+            new AS4Profile(
+                AS4_PROFILE_ID,
+                AS4_PROFILE_NAME,
+                MyCompatibilityValidator::new,
+                pModeProvider,
+                IPModeIDProvider.DEFAULT_DYNAMIC,
+                false,  // not deprecated
+                false   // do not invoke SPI for ping messages
+            )
+        );
+    }
+}
+```
+
+Then create the SPI service file:
+
+```
+# src/main/resources/META-INF/services/com.helger.phase4.profile.IAS4ProfileRegistrarSPI
+com.example.MyProfileRegistarSPI
+```
+
+## Accessing profiles at runtime
+
+```java
+// Access the global profile manager
+IAS4ProfileManager profileMgr = MetaAS4Manager.getProfileMgr();
+
+// List all registered profiles
+ICommonsList<IAS4Profile> profiles = profileMgr.getAllProfiles();
+
+// Look up a specific profile by ID
+IAS4Profile peppolProfile = profileMgr.getProfileOfID("peppol");
+
+// Get the count of registered profiles
+int count = profileMgr.getProfileCount();
+
+// Create a PMode template from a profile (not yet registered)
+PMode template = peppolProfile.createPModeTemplate(
+    "sender-id",
+    "receiver-id",
+    "https://receiver.example.com/as4"
+);
+```
+
+## Setting the default profile
+
+phase4 reads the default profile ID from the `phase4.default.profile` configuration key. Set it in your `application.properties` or `phase4.properties`:
+
+```properties
+# application.properties or phase4.properties
+phase4.default.profile=peppol
+```
+
+Retrieve the configured default profile ID at runtime:
+
+```java
+String defaultProfileId = AS4Configuration.getDefaultAS4ProfileID();
+```
+
+<Tip>
+  The default profile is used as a fallback when phase4 cannot resolve a specific profile from the incoming message. Setting it explicitly prevents the runtime warning _"No AS4 profile is registered"_ that appears when no profile module is on the classpath.
+</Tip>

@@ -1,0 +1,220 @@
+---
+title: PMode
+description: Processing Mode (PMode) model classes for configuring AS4 message exchange behavior in phase4.
+---
+
+**Package:** `com.helger.phase4.model.pmode`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+A P-Mode (Processing Mode) governs the AS4 message exchange behavior including party identifiers, agreement references, MEP, security settings, and retry parameters.
+
+## IPMode
+
+Read-only interface for a P-Mode. All read access to P-Mode data goes through this interface.
+
+### Interface methods
+
+<ResponseField name="getID()" type="String">
+  The unique P-Mode identifier. Never `null` nor empty.
+</ResponseField>
+
+<ResponseField name="getInitiator()" type="PModeParty">
+  The party initiating the message exchange. May be `null`.
+</ResponseField>
+
+<ResponseField name="getInitiatorID()" type="String">
+  Convenience method returning `type:value` or just `value`. May be `null`.
+</ResponseField>
+
+<ResponseField name="getResponder()" type="PModeParty">
+  The responding party. May be `null`.
+</ResponseField>
+
+<ResponseField name="getResponderID()" type="String">
+  Convenience method returning the responder's combined ID. May be `null`.
+</ResponseField>
+
+<ResponseField name="getAgreement()" type="String">
+  The agreement reference URI. May be `null`.
+</ResponseField>
+
+<ResponseField name="getMEP()" type="EMEP">
+  The Message Exchange Pattern (One-Way, Two-Way). Never `null`.
+</ResponseField>
+
+<ResponseField name="getMEPBinding()" type="EMEPBinding">
+  The MEP binding (Push, Pull, Sync, etc.). Never `null`.
+</ResponseField>
+
+<ResponseField name="getLeg1()" type="PModeLeg">
+  The first leg configuration (protocol, business info, error handling, security). May be `null`.
+</ResponseField>
+
+<ResponseField name="getLeg2()" type="PModeLeg">
+  The second leg configuration. May be `null`.
+</ResponseField>
+
+<ResponseField name="getPayloadService()" type="PModePayloadService">
+  Optional payload service (e.g. GZip compression). May be `null`.
+</ResponseField>
+
+<ResponseField name="getReceptionAwareness()" type="PModeReceptionAwareness">
+  Optional reception awareness settings (retries, duplicate elimination). May be `null`.
+</ResponseField>
+
+<ResponseField name="getAsJson()" type="IJsonObject">
+  Serialize the PMode to JSON. Never `null`. Since 0.12.0.
+</ResponseField>
+
+## PMode
+
+Default mutable implementation of `IPMode`.
+
+### Constructor
+
+```java
+new PMode(
+    String sPModeID,         // required, non-empty
+    PModeParty aInitiator,   // required
+    PModeParty aResponder,   // required
+    String sAgreement,       // required
+    EMEP eMEP,               // required
+    EMEPBinding eMEPBinding, // required
+    PModeLeg aLeg1,          // required
+    PModeLeg aLeg2,          // nullable
+    PModePayloadService aPayloadService,           // nullable
+    PModeReceptionAwareness aReceptionAwareness    // nullable
+)
+```
+
+### Mutator methods
+
+All mutators return `EChange` indicating whether the value actually changed.
+
+```java
+EChange c = pmode.setInitiator(newParty);
+EChange c = pmode.setResponder(newParty);
+EChange c = pmode.setAgreement("http://agreements.example.com/as4");
+EChange c = pmode.setMEP(EMEP.ONE_WAY);
+EChange c = pmode.setMEPBinding(EMEPBinding.PUSH);
+EChange c = pmode.setLeg1(leg1);
+EChange c = pmode.setLeg2(leg2);
+EChange c = pmode.setPayloadService(payloadService);
+EChange c = pmode.setReceptionAwareness(receptionAwareness);
+```
+
+## PModeParty
+
+Represents a single party within a PMode (initiator or responder).
+
+### Constructor
+
+```java
+new PModeParty(
+    String sIDType,    // nullable - the party ID scheme/type
+    String sIDValue,   // required, non-empty
+    String sRole,      // required, non-empty
+    String sUserName,  // nullable - for WS-Security UsernameToken
+    String sPassword   // nullable - for WS-Security UsernameToken
+)
+```
+
+### Factory method
+
+```java
+// Create without type or credentials
+PModeParty simple = PModeParty.createSimple("my-party-id", "http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator");
+```
+
+### Fields
+
+<ResponseField name="getIDType()" type="String">
+  Optional party ID type/scheme. May be `null`.
+</ResponseField>
+
+<ResponseField name="getIDValue()" type="String">
+  Mandatory party ID value. Never `null` nor empty.
+</ResponseField>
+
+<ResponseField name="getID()" type="String">
+  Combined ID: `type:value` when type is present, otherwise just `value`.
+</ResponseField>
+
+<ResponseField name="getRole()" type="String">
+  The party role URI. Never `null` nor empty.
+</ResponseField>
+
+<ResponseField name="getUserName()" type="String">
+  WS-Security UsernameToken user name. May be `null`.
+</ResponseField>
+
+<ResponseField name="getPassword()" type="String">
+  WS-Security UsernameToken password in plain text. May be `null`.
+</ResponseField>
+
+## PModeReceptionAwareness
+
+Controls retry behavior and duplicate message elimination for a P-Mode.
+
+Key fields (accessed via getters/setters on `PModeReceptionAwareness`):
+
+| Field | Type | Description |
+|---|---|---|
+| `ReceptionAwareness` | `boolean` | Whether reception awareness is active |
+| `RetryAttempts` | `int` | Number of retry attempts |
+| `RetryIntervalMS` | `long` | Retry interval in milliseconds |
+| `DuplicateElimination` | `boolean` | Whether duplicate messages should be eliminated |
+
+## P-Mode Managers
+
+phase4 provides two built-in `IPModeManager` implementations, selected via `AS4Configuration.isUseInMemoryManagers()`.
+
+<AccordionGroup>
+  <Accordion title="PModeManagerInMemory">
+    All P-Modes are held in memory only. Created automatically when `phase4.manager.inmemory=true` (the default).
+
+    ```java
+    import com.helger.phase4.mgr.MetaAS4Manager;
+
+    IPModeManager mgr = MetaAS4Manager.getPModeMgr();
+    mgr.createOrUpdatePMode(myPMode);
+    IPMode pmode = mgr.getPModeOfID("my-pmode-id");
+    ```
+  </Accordion>
+  <Accordion title="PModeManagerXML">
+    P-Modes are persisted to XML files under `AS4Configuration.getDataPath()`. Used when `phase4.manager.inmemory=false`.
+
+    No code changes are required — the manager is swapped transparently at startup.
+  </Accordion>
+</AccordionGroup>
+
+## Example: creating a PMode
+
+```java
+import com.helger.phase4.model.pmode.PMode;
+import com.helger.phase4.model.pmode.PModeParty;
+import com.helger.phase4.model.EMEP;
+import com.helger.phase4.model.EMEPBinding;
+
+PModeParty initiator = PModeParty.createSimple(
+    "sender-party",
+    "http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator"
+);
+PModeParty responder = PModeParty.createSimple(
+    "receiver-party",
+    "http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/responder"
+);
+
+PMode pmode = new PMode(
+    "my-pmode-id",
+    initiator,
+    responder,
+    "http://agreements.example.com/as4",
+    EMEP.ONE_WAY,
+    EMEPBinding.PUSH,
+    myLeg1,
+    null,  // no second leg for one-way
+    null,  // no payload service
+    null   // no reception awareness
+);
+```

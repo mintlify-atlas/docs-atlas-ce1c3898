@@ -1,0 +1,102 @@
+---
+title: Sending Messages
+description: Overview of the two sending approaches in phase4 — profile-specific senders and the generic AS4Sender — and the shared builder pattern they all use.
+---
+
+phase4 provides two complementary approaches for sending AS4 messages:
+
+<CardGroup cols={2}>
+  <Card title="Profile-specific senders" icon="layer-group">
+    Pre-configured builders for Peppol, CEF eDelivery, BDEW, ENTSOG, and EUDAMED. Sensible defaults for crypto algorithms, PMode IDs, HTTP client settings, and message properties are baked in so you don't have to set them manually.
+  </Card>
+  <Card title="Generic AS4Sender" icon="gear">
+    No profile defaults applied. You control every AS4 header field, encryption algorithm, and party ID. Use this when your trading network doesn't match any of the built-in profiles.
+  </Card>
+</CardGroup>
+
+## The builder pattern
+
+Every sender in phase4 exposes a fluent builder. The same call style applies regardless of which sender you use:
+
+```java
+EAS4UserMessageSendResult eResult =
+    Phase4PeppolSender.builder()          // or AS4Sender.builderUserMessage(), etc.
+        .someField(value)
+        .anotherField(value)
+        .sendMessageAndCheckForReceipt(); // or .sendMessage()
+```
+
+Builders are **not thread-safe**. Create a new builder instance for each outgoing message.
+
+## Triggering the send
+
+Each builder exposes two methods to trigger sending:
+
+| Method | Returns | When to use |
+|---|---|---|
+| `sendMessage()` | `ESuccess` | When you handle receipt checking yourself via `signalMsgConsumer()` |
+| `sendMessageAndCheckForReceipt()` | `EAS4UserMessageSendResult` | Preferred — wraps the entire send + receipt check in one call |
+
+## EAS4UserMessageSendResult values
+
+`sendMessageAndCheckForReceipt()` returns one of these enum values:
+
+| Value | ID | Meaning | Retry? |
+|---|---|---|---|
+| `SUCCESS` | `success` | Receipt received — message delivered | — |
+| `INVALID_PARAMETERS` | `invalid-parameters` | A mandatory builder field is missing | No |
+| `TRANSPORT_ERROR` | `transport-error` | Network / HTTP(S) failure | Yes |
+| `TRANSPORT_ERROR_NO_RETRY` | `transport-error-no-retry` | Network failure where retry is unlikely to help | No |
+| `NO_SIGNAL_MESSAGE_RECEIVED` | `no-signal-msg-received` | Response was not a valid AS4 signal message | Yes |
+| `AS4_ERROR_MESSAGE_RECEIVED` | `as4-error-msg-received` | The receiver returned an AS4 error | No |
+| `INVALID_SIGNAL_MESSAGE_RECEIVED` | `invalid-signal-message-received` | Signal message contained neither receipt nor error | Yes |
+
+Use `isSuccess()` and `isRetryFeasible()` on the result to branch your error-handling logic.
+
+```java
+final EAS4UserMessageSendResult eResult = builder.sendMessageAndCheckForReceipt();
+if (eResult.isSuccess()) {
+    // message delivered
+} else if (eResult.isRetryFeasible()) {
+    // schedule a retry
+} else {
+    // permanent failure — investigate logs
+}
+```
+
+## When to use which sender
+
+<Steps>
+  <Step title="Check for a matching profile">
+    If your network uses Peppol, CEF eDelivery / TOOP, BDEW, ENTSOG, or EUDAMED, use the corresponding profile-specific sender. It sets the correct profile ID, crypto parameters, HTTP timeouts, and mandatory message properties automatically.
+  </Step>
+  <Step title="Fall back to the generic sender">
+    If no profile matches — for example a custom AS4 trading network — use `AS4Sender.builderUserMessage()` and configure all fields manually.
+  </Step>
+</Steps>
+
+## Sender pages
+
+<CardGroup cols={2}>
+  <Card title="Generic AS4" href="/sending/generic-as4">
+    `AS4Sender.builderUserMessage()` and `builderPullRequest()`
+  </Card>
+  <Card title="Peppol" href="/sending/peppol">
+    `Phase4PeppolSender.builder()` and `sbdhBuilder()`
+  </Card>
+  <Card title="CEF eDelivery" href="/sending/cef-edelivery">
+    `Phase4CEFSender.builder()`
+  </Card>
+  <Card title="BDEW" href="/sending/bdew">
+    `Phase4BDEWSender.builder()`
+  </Card>
+  <Card title="ENTSOG" href="/sending/entsog">
+    `Phase4ENTSOGSender.builder()`
+  </Card>
+  <Card title="EUDAMED" href="/sending/eudamed">
+    `Phase4EudamedSender.builder()`
+  </Card>
+  <Card title="Dynamic Discovery" href="/sending/dynamic-discovery">
+    `IAS4EndpointDetailProvider` and its implementations
+  </Card>
+</CardGroup>

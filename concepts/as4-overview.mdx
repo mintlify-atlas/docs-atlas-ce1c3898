@@ -1,0 +1,117 @@
+---
+title: "AS4 overview"
+description: "Understand the AS4 protocol, message types, message exchange patterns, and SOAP version support in phase4."
+---
+
+## What is AS4?
+
+AS4 is the OASIS ebMS 3.0 AS4 Profile — a standardized web services protocol for secure and reliable B2B message exchange. It defines how organizations exchange business documents over the internet using SOAP, WS-Security, and MIME attachments.
+
+AS4 is mandated or recommended by many e-delivery networks including Peppol, CEF eDelivery, BDEW, ENTSOG, and EUDAMED. It provides:
+
+- **Reliable delivery** — guaranteed message receipt via ebMS receipts
+- **Message integrity** — XML Digital Signatures over the SOAP message and attachments
+- **Confidentiality** — XML Encryption for sensitive payloads
+- **Non-repudiation** — signed receipts that prove delivery
+- **Interoperability** — standardized message format across vendors and networks
+
+## What is phase4?
+
+phase4 is an open-source Java library that implements the AS4 protocol. You embed it directly into your Java application — there is no separate middleware server to operate.
+
+<CardGroup cols={2}>
+  <Card title="Sends AS4 messages" icon="paper-plane">
+    Construct and send User Messages to remote MSH endpoints with signing, encryption, and receipt handling.
+  </Card>
+  <Card title="Receives AS4 messages" icon="inbox">
+    Accept inbound AS4 messages via a servlet, validate WS-Security, and dispatch payloads to your application.
+  </Card>
+  <Card title="Profile-aware" icon="layer-group">
+    Built-in profiles for Peppol, CEF, BDEW, ENTSOG, EuCTP, DBNAlliance, and HRE-Delivery enforce protocol-specific rules.
+  </Card>
+  <Card title="WSS4J-powered" icon="shield">
+    Signing and encryption are backed by the battle-tested Apache WSS4J library.
+  </Card>
+</CardGroup>
+
+## Message types
+
+AS4 defines two top-level message categories that travel inside a SOAP envelope.
+
+### User messages
+
+A User Message carries the actual business payload. It contains:
+
+- **PartyInfo** — identifies the sender (`From`) and receiver (`To`), each with a party ID and role
+- **CollaborationInfo** — the service, action, conversation ID, and agreement reference
+- **MessageProperties** — arbitrary name/value pairs for application-level routing
+- **PayloadInfo** — references to MIME attachments or inline body payloads
+
+### Signal messages
+
+Signal Messages are protocol-level control messages. phase4 handles three types:
+
+<AccordionGroup>
+  <Accordion title="Receipt signal">
+    Sent by the receiver back to the sender to confirm that a User Message was successfully processed. When non-repudiation of receipt is enabled, the Receipt contains a digest of the original message, allowing the sender to prove delivery.
+  </Accordion>
+  <Accordion title="Error signal">
+    Sent when message processing fails — for example, a WS-Security validation failure or a PMode mismatch. Error signals carry a structured error code and description.
+  </Accordion>
+  <Accordion title="Pull request signal">
+    Used in the One-Way/Pull MEP. The receiver sends a Pull Request to ask the sender to deliver a message from a named Message Partition Channel (MPC). The sender responds with a User Message or an empty response.
+  </Accordion>
+</AccordionGroup>
+
+## Message exchange patterns
+
+AS4 defines Message Exchange Patterns (MEPs) that govern how many messages flow and in which direction. In phase4 these are represented by the `EMEP` and `EMEPBinding` enums.
+
+<Note>
+  Most networks — including Peppol and CEF — use One-Way/Push. Check your profile documentation to confirm which MEP applies.
+</Note>
+
+| MEP | `EMEP` | `EMEPBinding` | Description |
+|-----|--------|---------------|-------------|
+| One-Way/Push | `EMEP.ONE_WAY` | `EMEPBinding.PUSH` | Sender pushes a single User Message to the receiver's endpoint. This is the most common pattern. |
+| Two-Way/Push-and-Push | `EMEP.TWO_WAY` | `EMEPBinding.PUSH_AND_PUSH` | Two independent push exchanges on the same agreement. Leg 1 carries the request; Leg 2 carries the reply. |
+| One-Way/Pull | `EMEP.ONE_WAY` | `EMEPBinding.PULL` | The receiver polls the sender's MPC endpoint for a waiting message. |
+
+## SOAP version support
+
+phase4 supports both SOAP 1.1 and SOAP 1.2 via the `ESoapVersion` enum.
+
+```java
+// SOAP 1.2 is the AS4 default
+ESoapVersion defaultVersion = ESoapVersion.AS4_DEFAULT; // ESoapVersion.SOAP_12
+
+// SOAP 1.1 is also available
+ESoapVersion soap11 = ESoapVersion.SOAP_11;
+
+// Check which version a message uses
+String namespaceURI = ESoapVersion.SOAP_12.getNamespaceURI();
+// => "http://www.w3.org/2003/05/soap-envelope"
+```
+
+<Info>
+  `ESoapVersion.AS4_DEFAULT` is `SOAP_12`. According to the AS4 specification (section 2.1 Feature Set), SOAP 1.2 is the required version. Use SOAP 1.1 only when connecting to legacy systems that cannot support SOAP 1.2.
+</Info>
+
+The SOAP version is configured per PMode leg via `PModeLegProtocol`. Each leg can use a different SOAP version, though this is uncommon in practice.
+
+## The AS4 message lifecycle
+
+<Steps>
+  <Step title="Construct the message">
+    Your application provides the business payload and addressing metadata (party IDs, service, action). phase4 wraps these in an ebMS 3.0 User Message.
+  </Step>
+  <Step title="Apply WS-Security">
+    Based on the PMode security configuration, phase4 signs the message with your private key and optionally encrypts it with the receiver's public certificate.
+  </Step>
+  <Step title="Send over HTTPS">
+    phase4 serializes the SOAP envelope and MIME attachments and POSTs them to the receiver's AS4 endpoint URL.
+  </Step>
+  <Step title="Process the receipt">
+    The receiver returns a Receipt signal (synchronously or asynchronously). phase4 validates the receipt signature and marks the message as delivered.
+  </Step>
+</Steps>

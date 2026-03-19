@@ -1,0 +1,264 @@
+---
+title: Peppol Sending
+description: Send AS4 messages to the Peppol network using Phase4PeppolSender with automatic SBDH creation, SMP lookup, and AP certificate validation.
+---
+
+`Phase4PeppolSender` wraps all Peppol-specific AS4 requirements: Standard Business Document Header (SBDH) creation, SMP-based dynamic discovery, AP certificate validity checks, and the correct Peppol PMode and crypto parameters.
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-peppol-client</artifactId>
+  <version>x.y.z</version>
+</dependency>
+```
+
+## Two builder variants
+
+| Factory method | Use case |
+|---|---|
+| `Phase4PeppolSender.builder()` | Provide a raw business document (Invoice, Order, …). phase4 creates the SBDH automatically. |
+| `Phase4PeppolSender.sbdhBuilder()` | You already have a serialized Standard Business Document. Validation is skipped. |
+
+## Sending with automatic SBDH creation
+
+This is the recommended approach for most integrations. Pass the business document payload and let phase4 wrap it in a Peppol SBDH.
+
+```java
+import com.helger.peppol.sml.ESML;
+import com.helger.peppolid.IParticipantIdentifier;
+import com.helger.phase4.peppol.Phase4PeppolSender;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+import com.helger.phive.peppol.PeppolValidation2025_11;
+import com.helger.smpclient.peppol.SMPClientReadOnly;
+
+// The receiver's Peppol participant ID
+final IParticipantIdentifier aReceiverID =
+    Phase4PeppolSender.IF.createParticipantIdentifierWithDefaultScheme("9915:receiver");
+
+final EAS4UserMessageSendResult eResult =
+    Phase4PeppolSender.builder()
+        // Peppol identifiers
+        .senderParticipantID(
+            Phase4PeppolSender.IF.createParticipantIdentifierWithDefaultScheme("9915:sender"))
+        .receiverParticipantID(aReceiverID)
+        .documentTypeID(
+            Phase4PeppolSender.IF.createDocumentTypeIdentifierWithDefaultScheme(
+                "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2::Invoice" +
+                "##urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0::2.1"))
+        .processID(
+            Phase4PeppolSender.IF.createProcessIdentifierWithDefaultScheme(
+                "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0"))
+        // Country code of the sender (C1) — mandatory since 2024-01-01
+        .countryC1("DE")
+        // Sender party ID — CN part of the AP certificate (your Seat ID)
+        .senderPartyID("POP000306")
+        // Business document payload (DOM Element)
+        .payload(aInvoiceElement)
+        // SMP lookup for dynamic endpoint discovery
+        .smpClient(new SMPClientReadOnly(
+            Phase4PeppolSender.URL_PROVIDER, aReceiverID, ESML.DIGIT_PRODUCTION))
+        // Optional: client-side validation
+        .validationConfiguration(
+            PeppolValidation2025_11.VID_OPENPEPPOL_INVOICE_UBL_V3,
+            new Phase4PeppolValidatonResultHandler())
+        .sendMessageAndCheckForReceipt();
+
+if (eResult.isSuccess())
+    LOGGER.info("Invoice delivered to Peppol network");
+else if (eResult.isRetryFeasible())
+    scheduleRetry();
+else
+    handlePermanentFailure(eResult);
+```
+
+## Payload forms
+
+The `PeppolUserMessageBuilder.payload()` method accepts three forms:
+
+<CodeGroup>
+```java DOM Element
+// From an already-parsed DOM element (cloned internally)
+.payload(aDomElement)
+```
+
+```java byte array
+// From raw XML bytes (parsed to DOM internally, no clone needed)
+.payload(aXmlBytes)
+```
+
+```java InputStream provider
+// From a lazy InputStream (parsed to DOM internally)
+.payload(myInputStreamProvider)
+```
+</CodeGroup>
+
+For non-XML payloads (binary or text content), use the dedicated wrappers:
+
+```java
+// Binary content (e.g. PDF)
+.payloadBinaryContent(aPdfBytes, CMimeType.APPLICATION_PDF, null)
+
+// Text content (e.g. CSV)
+.payloadTextContent(aCsvString, CMimeType.TEXT_CSV)
+```
+
+Both methods wrap the content in the Peppol SBDH `BinaryContent` / `TextContent` element as defined in the Peppol Business Message Envelope specification.
+
+## Sending a pre-built SBDH
+
+If you have already serialized a `PeppolSBDHData` object (e.g. for a retry with the same Instance Identifier), use `sbdhBuilder()`:
+
+```java
+import com.helger.peppol.sbdh.PeppolSBDHData;
+
+final PeppolSBDHData aSBDH = ...;
+
+Phase4PeppolSender.sbdhBuilder()
+    // Sets sender, receiver, docType, processID, countryC1, and payload in one call
+    .payloadAndMetadata(aSBDH)
+    // SMP lookup or static endpoint
+    .smpClient(new SMPClientReadOnly(
+        Phase4PeppolSender.URL_PROVIDER, aSBDH.getReceiverAsIdentifier(), ESML.DIGIT_PRODUCTION))
+    .sendMessageAndCheckForReceipt();
+```
+
+Alternatively, if you only have the raw SBDH bytes:
+
+```java
+Phase4PeppolSender.sbdhBuilder()
+    .senderParticipantID(...)
+    .receiverParticipantID(...)
+    .documentTypeID(...)
+    .processID(...)
+    .countryC1("DE")
+    .payload(aSBDHBytes)       // raw serialized SBD
+    .smpClient(...)
+    .sendMessageAndCheckForReceipt();
+```
+
+## Dynamic SMP discovery
+
+phase4 resolves the receiver's endpoint URL and AP certificate from the Peppol SMP/SML infrastructure.
+
+<Tabs>
+  <Tab title="SMP lookup (recommended)">
+```java
+import com.helger.peppol.sml.ESML;
+import com.helger.smpclient.peppol.SMPClientReadOnly;
+
+// Uses NAPTR-based DNS for SMP URL resolution
+.smpClient(new SMPClientReadOnly(
+    Phase4PeppolSender.URL_PROVIDER,  // PeppolNaptrURLProvider.INSTANCE
+    aReceiverID,
+    ESML.DIGIT_PRODUCTION))           // or ESML.DIGIT_TEST
+```
+  </Tab>
+  <Tab title="Static endpoint (testing)">
+```java
+import java.security.cert.X509Certificate;
+
+// Skip SMP lookup — provide certificate and URL directly
+.receiverEndpointDetails(aReceiverX509Cert, "https://ap.receiver.example.org/as4")
+```
+  </Tab>
+  <Tab title="Custom provider">
+```java
+import com.helger.phase4.dynamicdiscovery.IAS4EndpointDetailProvider;
+
+.endpointDetailProvider(myCustomProvider)
+```
+  </Tab>
+</Tabs>
+
+## AP certificate validation
+
+By default, phase4 validates the receiver's AP certificate against the Peppol CA chain. This checks certificate validity and OCSP revocation status.
+
+```java
+Phase4PeppolSender.builder()
+    // Use the test CA for the Peppol test environment
+    .peppolAP_CAChecker(PeppolTrustedCA.peppolTestAP())
+    // Inspect the certificate check result
+    .certificateConsumer((aCert, aCheckTime, eCheckResult) -> {
+        LOGGER.info("AP certificate check: " + eCheckResult);
+    })
+    // Disable the check entirely (not recommended for production)
+    // .checkReceiverAPCertificate(false)
+    ...
+```
+
+<Warning>
+  Certificate validation is enabled by default and is strongly recommended for production use. Disabling it means you cannot verify that messages go to a legitimate Peppol Access Point.
+</Warning>
+
+## Payload compression
+
+The Peppol builder compresses the SBDH payload with GZip by default (`DEFAULT_COMPRESS_PAYLOAD = true`). Disable it if required:
+
+```java
+.compressPayload(false)
+```
+
+## Client-side validation
+
+The `PeppolUserMessageBuilder` can validate the business document before building the SBDH:
+
+```java
+import com.helger.phive.peppol.PeppolValidation2025_11;
+
+// Use the default validation result handler (throws on error)
+.validationConfiguration(PeppolValidation2025_11.VID_OPENPEPPOL_INVOICE_UBL_V3)
+
+// Provide a custom result handler
+.validationConfiguration(
+    PeppolValidation2025_11.VID_OPENPEPPOL_INVOICE_UBL_V3,
+    new Phase4PeppolValidatonResultHandler() {
+        @Override
+        public void onValidationSuccess(final ValidationResultList aResult) {
+            LOGGER.info("Document is valid");
+        }
+    })
+
+// Disable validation entirely
+.disableValidation()
+```
+
+<Note>
+  Validation only works with `Phase4PeppolSender.builder()`, not with `sbdhBuilder()` (the SBDH is assumed to be pre-validated).
+</Note>
+
+## Peppol Reporting
+
+After a successful send you can create a Peppol Reporting item:
+
+```java
+final Phase4PeppolSender.PeppolUserMessageBuilder aBuilder =
+    Phase4PeppolSender.builder()
+        ...;
+
+final EAS4UserMessageSendResult eResult = aBuilder.sendMessageAndCheckForReceipt();
+if (eResult.isSuccess()) {
+    // Create and store reporting item in one step
+    aBuilder.createAndStorePeppolReportingItemAfterSending("myEndUserID");
+}
+```
+
+## Common optional fields
+
+```java
+Phase4PeppolSender.builder()
+    // Override the SBDH instance identifier (useful for retries)
+    .sbdhInstanceIdentifier("same-uuid-as-original-send")
+    // Log the endpoint URL that was resolved
+    .endpointURLConsumer(url -> LOGGER.info("Sending to: " + url))
+    // Log the technical contact from the SMP record
+    .technicalContactConsumer(contact -> LOGGER.info("Technical contact: " + contact))
+    // Log the resolved AP certificate
+    .certificateConsumer((cert, time, result) -> ...)
+    // Custom payload Content-ID header
+    .payloadContentID("myPayload@example.org")
+    ...
+```

@@ -1,0 +1,106 @@
+---
+title: Phase4EudamedSender
+description: EUDAMED AS4 profile sender for the European database on medical devices.
+---
+
+**Package:** `com.helger.phase4.eudamed`  
+**Maven artifact:** `com.helger.phase4:phase4-eudamed-client`
+
+`Phase4EudamedSender` sends AS4 messages to the EUDAMED system using the CEF four-corner profile. It uses string-based sender and receiver IDs (unlike the Peppol/CEF senders which use `IParticipantIdentifier`).
+
+## Factory method
+
+```java
+Phase4EudamedSender.EudamedUserMessageBuilder builder = Phase4EudamedSender.builder();
+```
+
+## Default settings applied by the builder
+
+| Setting | Value |
+|---|---|
+| AS4 profile | CEF four-corner (`as4.cef.edelivery.eu.fourCorner`) |
+| HTTP client | EUDAMED-specific HTTP client settings |
+
+## EudamedUserMessageBuilder fields
+
+### Required fields
+
+<ParamField path="body.senderParticipantID" type="String" required>
+  Sender participant identifier string. Sent as `originalSender` user message property.
+</ParamField>
+
+<ParamField path="body.receiverParticipantID" type="String" required>
+  Receiver participant identifier string. Sent as `finalRecipient` user message property.
+</ParamField>
+
+<ParamField path="body.documentTypeID" type="IDocumentTypeIdentifier" required>
+  Document type identifier. Automatically sets the `action` field.
+</ParamField>
+
+<ParamField path="body.processID" type="IProcessIdentifier" required>
+  Process identifier. Automatically sets the `service` fields.
+</ParamField>
+
+<ParamField path="body.fromPartyID(IParticipantIdentifier)" type="IParticipantIdentifier" required>
+  The sender's AS4 party ID. Sets both type (scheme) and value.
+</ParamField>
+
+<ParamField path="body.toPartyID(IParticipantIdentifier)" type="IParticipantIdentifier" required>
+  The receiver's AS4 party ID. Sets both type (scheme) and value.
+</ParamField>
+
+<ParamField path="body.payload" type="AS4OutgoingAttachment" required>
+  The payload to send.
+</ParamField>
+
+<ParamField path="body.endpointDetailProvider" type="IAS4EndpointDetailProvider" required>
+  Endpoint discovery provider. Use `receiverEndpointDetails()` for static configuration.
+</ParamField>
+
+### Endpoint discovery
+
+<ParamField path="body.receiverEndpointDetails(X509Certificate, String)" type="void">
+  Set endpoint statically without SMP lookup: provide the receiver certificate and destination URL.
+</ParamField>
+
+### Callbacks
+
+<ParamField path="body.certificateConsumer" type="Consumer&lt;X509Certificate&gt;">
+  Optional callback invoked with the resolved receiver AP certificate.
+</ParamField>
+
+<ParamField path="body.endointURLConsumer" type="Consumer&lt;String&gt;">
+  Optional callback invoked with the resolved AP endpoint URL.
+</ParamField>
+
+## Example
+
+```java
+import com.helger.phase4.eudamed.Phase4EudamedSender;
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.peppolid.factory.SimpleIdentifierFactory;
+
+SimpleIdentifierFactory IF = Phase4EudamedSender.IF;
+
+EAS4UserMessageSendResult result = Phase4EudamedSender.builder()
+    .cryptoFactorySign(cryptoFactory)
+    .cryptoFactoryCrypt(cryptoFactory)
+    .senderParticipantID("urn:eudamed:ec.europa.eu:sender-id")
+    .receiverParticipantID("urn:eudamed:ec.europa.eu:eudamed")
+    .documentTypeID(IF.createDocumentTypeIdentifier(
+        "urn:eudamed:doctype", "urn:eu:eudamed:registration:v1.0"))
+    .processID(IF.createProcessIdentifier(
+        "urn:eudamed:procid", "urn:eu:eudamed:process:registration"))
+    .fromPartyID(IF.createParticipantIdentifier(
+        "urn:oasis:names:tc:ebcore:partyid-type:unregistered", "my-party"))
+    .toPartyID(IF.createParticipantIdentifier(
+        "urn:oasis:names:tc:ebcore:partyid-type:unregistered", "eudamed"))
+    .fromRole(CAS4.DEFAULT_INITIATOR_URL)
+    .toRole(CAS4.DEFAULT_RESPONDER_URL)
+    .receiverEndpointDetails(receiverCert, "https://eudamed.ec.europa.eu/as4")
+    .payload(AS4OutgoingAttachment.builder()
+        .data(xmlPayloadBytes)
+        .mimeType(CMimeType.APPLICATION_XML)
+        .build())
+    .sendMessageAndCheckForReceipt();
+```

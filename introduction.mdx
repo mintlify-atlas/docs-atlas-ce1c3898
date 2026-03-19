@@ -1,0 +1,93 @@
+---
+title: "Introduction"
+description: "phase4 is a lightweight, embeddable Java library for sending and receiving AS4 messages. It provides built-in support for Peppol, CEF eDelivery, BDEW, ENTSOG, EUDAMED, and other e-delivery profiles."
+---
+
+## What is phase4?
+
+phase4 is an open-source Java library that implements the AS4 messaging protocol (OASIS ebMS 3.0 AS4 Profile). It is designed to be embedded directly into existing Java applications, giving you full control over AS4 message exchange without requiring a standalone middleware server.
+
+AS4 is the protocol of choice for many B2B and government e-delivery networks including:
+
+- **Peppol** — European procurement and invoicing network (OpenPeppol)
+- **CEF eDelivery** — European Commission Connecting Europe Facility
+- **BDEW** — German energy sector data exchange
+- **ENTSOG** — European Network of Transmission System Operators for Gas
+- **EUDAMED** — EU Medical Devices database
+- **DBNAlliance** — North American B2B document exchange
+- **HRE-Delivery** — HR electronic delivery
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Send your first AS4 message in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Add phase4 to your Maven or Gradle project
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/as4-overview">
+    Understand AS4, PModes, and messaging profiles
+  </Card>
+  <Card title="Peppol Integration" icon="globe" href="/sending/peppol">
+    Send Peppol-compliant documents with dynamic SMP discovery
+  </Card>
+</CardGroup>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Multi-profile support" icon="layer-group">
+    Peppol, CEF, BDEW, ENTSOG, EUDAMED, EuCTP, DBNAlliance, and HRE-Delivery profiles built-in
+  </Card>
+  <Card title="Send and receive" icon="arrows-left-right">
+    Full AS4 client and server capabilities — send user messages and receive via servlet
+  </Card>
+  <Card title="WS-Security" icon="shield">
+    WSS4J-based signing and encryption with flexible key store configuration
+  </Card>
+  <Card title="Dynamic discovery" icon="magnifying-glass">
+    Automatic SMP/SML endpoint lookup for Peppol, BDXR, and BDXR2 networks
+  </Card>
+  <Card title="Builder pattern API" icon="code">
+    Fluent Java builder API for constructing and sending AS4 messages
+  </Card>
+  <Card title="PMode management" icon="sliders">
+    In-memory and XML-persistent PMode management with full validation
+  </Card>
+</CardGroup>
+
+## Architecture overview
+
+phase4 is structured as a multi-module Maven project:
+
+| Module | Purpose |
+|--------|---------|
+| `phase4-lib` | Core AS4 library — sender, receiver, crypto, PMode |
+| `phase4-profile-peppol` | Peppol AS4 profile definitions and validators |
+| `phase4-profile-cef` | CEF eDelivery profile |
+| `phase4-profile-bdew` | BDEW energy sector profile |
+| `phase4-profile-entsog` | ENTSOG gas network profile |
+| `phase4-profile-eudamed` | EUDAMED medical devices profile |
+| `phase4-peppol-client` | High-level Peppol sender (`Phase4PeppolSender`) |
+| `phase4-cef-client` | High-level CEF sender (`Phase4CEFSender`) |
+| `phase4-bdew-client` | High-level BDEW sender (`Phase4BDEWSender`) |
+| `phase4-peppol-servlet` | Peppol AS4 receiving servlet |
+| `phase4-peppol-server-webapp` | Example Peppol server web application |
+| `phase4-dynamic-discovery` | SMP/BDXR dynamic endpoint discovery |
+
+## Maven coordinates
+
+The core library is published to Maven Central under the `com.helger.phase4` group ID:
+
+```xml pom.xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-lib</artifactId>
+  <version>4.4.0</version>
+</dependency>
+```
+
+See the [Installation guide](/installation) for profile-specific dependencies.
+
+## License
+
+phase4 is released under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).

@@ -1,0 +1,167 @@
+---
+title: Duplicate Detection
+description: How phase4 detects and rejects duplicate incoming AS4 messages.
+---
+
+
+phase4 includes built-in duplicate message detection to protect against accidentally processing the same AS4 message more than once. This is a key reliability feature when combined with retries.
+
+## How it works
+
+When an incoming user message is processed, phase4 calls `IAS4DuplicateManager.registerAndCheck(...)` with the message ID. If the message ID has already been registered, the manager returns `EContinue.BREAK` and the message is rejected with an AS4 error. Otherwise it is registered and processing continues normally.
+
+```
+Incoming message
+    ↓
+registerAndCheck(messageID, profileID, pmodeID)
+    ├─ New ID  → Register + CONTINUE processing
+    └─ Known ID → BREAK → Return AS4 duplicate error
+```
+
+## IAS4DuplicateManager
+
+```java
+public interface IAS4DuplicateManager {
+    // Check and register a message ID.
+    // Returns CONTINUE if new, BREAK if duplicate.
+    @NonNull EContinue registerAndCheck(
+        @Nullable String sMessageID,
+        @Nullable String sProfileID,
+        @Nullable String sPModeID
+    );
+
+    // Find a registered item by message ID
+    @Nullable IAS4DuplicateItem getItemOfMessageID(@Nullable String sMessageID);
+
+    // Get all registered items
+    @NonNull ICommonsList<IAS4DuplicateItem> getAll();
+
+    // Evict all items received before the given date/time
+    @NonNull ICommonsList<String> evictAllItemsBefore(@NonNull OffsetDateTime aRefDT);
+
+    // Clear the entire cache
+    @NonNull EChange clearCache();
+}
+```
+
+## Built-in implementations
+
+<CardGroup cols={2}>
+  <Card title="AS4DuplicateManagerInMemory" icon="memory">
+    Thread-safe in-memory implementation. Fast, but does not survive server restarts.
+  </Card>
+  <Card title="AS4DuplicateManagerXML" icon="database">
+    File-based XML persistence. Survives restarts; suitable for production use.
+  </Card>
+</CardGroup>
+
+### In-memory manager
+
+```java
+import com.helger.phase4.duplicate.AS4DuplicateManagerInMemory;
+
+// The default manager used when no custom one is configured
+AS4DuplicateManagerInMemory dupMgr = new AS4DuplicateManagerInMemory();
+
+// Register and check a message ID
+EContinue result = dupMgr.registerAndCheck("msg-id-12345", "peppol", "pmode-id");
+if (result.isBreak()) {
+    // Message is a duplicate
+}
+```
+
+### XML-persistent manager
+
+```java
+import com.helger.phase4.duplicate.AS4DuplicateManagerXML;
+
+// Persists to a file under the configured data path
+AS4DuplicateManagerXML dupMgr = new AS4DuplicateManagerXML(
+    new File("/data/phase4/duplicates")
+);
+```
+
+## Disposal window
+
+Stored message IDs are kept for a configurable duration before being evicted. This prevents the duplicate store from growing indefinitely.
+
+### Configuration property
+
+Set the retention window in the phase4 configuration file:
+
+```properties
+# Number of minutes to retain message IDs for duplicate checking
+# Default: 10 minutes
+phase4.incoming.duplicatedisposal.minutes=10
+```
+
+The `AS4Configuration` helper exposes this value:
+
+```java
+import com.helger.phase4.config.AS4Configuration;
+
+// Default is 10 minutes
+long disposalMinutes = AS4Configuration.getIncomingDuplicateDisposalMinutes();
+```
+
+### Eviction
+
+Eviction is typically performed on a schedule. Call `evictAllItemsBefore(...)` with a reference timestamp:
+
+```java
+import java.time.OffsetDateTime;
+
+// Evict entries older than the configured disposal window
+OffsetDateTime cutoff = OffsetDateTime.now().minusMinutes(
+    AS4Configuration.getIncomingDuplicateDisposalMinutes()
+);
+ICommonsList<String> evicted = dupMgr.evictAllItemsBefore(cutoff);
+```
+
+## Enabling or disabling duplicate detection per PMode
+
+Duplicate detection is configured in `PModeReceptionAwareness`. All built-in profiles enable it:
+
+```java
+import com.helger.phase4.model.pmode.PModeReceptionAwareness;
+import com.helger.base.state.ETriState;
+
+// Enable duplicate detection in a custom PMode
+new PModeReceptionAwareness(
+    ETriState.TRUE,   // receptionAwareness
+    ETriState.TRUE,   // retry
+    1,                // maxRetries
+    10_000L,          // retryIntervalMS
+    ETriState.TRUE    // duplicateDetection
+);
+
+// Disable duplicate detection
+new PModeReceptionAwareness(
+    ETriState.TRUE,
+    ETriState.FALSE,  // no retries
+    0,
+    0,
+    ETriState.FALSE   // no duplicate detection
+);
+```
+
+## Custom duplicate manager
+
+To replace the default implementation (e.g. with a database-backed store), implement `IAS4DuplicateManager` and register it:
+
+```java
+import com.helger.phase4.mgr.MetaAS4Manager;
+
+// Replace the global duplicate manager
+MetaAS4Manager.getDuplicateMgr(); // get current
+// Registration depends on how the manager is initialised at startup
+// (see MetaAS4Manager documentation)
+```
+
+<Warning>
+With `AS4DuplicateManagerInMemory`, all registered message IDs are lost on server restart. If your system needs to handle retries that may arrive after a restart, use `AS4DuplicateManagerXML` or a custom persistent implementation.
+</Warning>
+
+<Note>
+Message IDs are stored without any normalisation. The comparison is an exact string match against the EBMS3 `MessageId` header value.
+</Note>

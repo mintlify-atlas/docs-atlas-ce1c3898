@@ -1,0 +1,169 @@
+---
+title: "Logging"
+description: "Configure and customize logging for the phase4 library using SLF4J and log4j2."
+---
+
+phase4 uses [SLF4J](https://www.slf4j.org/) for all logging, which means you can plug in any SLF4J-compatible backend. The example server applications ship with [Apache Log4j 2](https://logging.apache.org/log4j/2.x/).
+
+## How phase4 logging works
+
+All phase4 loggers are created through `Phase4LoggerFactory`, which wraps the standard SLF4J `LoggerFactory`. The wrapper adds two features:
+
+- **Thread-local prefix** — a string prepended to every log message on the current thread.
+- **Thread-local suffix** — a string appended to every log message on the current thread.
+
+These per-thread decorations are managed by `Phase4LogCustomizer` and are useful for correlating log output with a specific incoming message or request.
+
+### Logger naming
+
+All loggers follow the standard Java package name convention. The root logger for the entire library is:
+
+```
+com.helger.phase4
+```
+
+Key sub-packages:
+
+| Logger / package | What it covers |
+|---|---|
+| `com.helger.phase4` | All phase4 classes |
+| `com.helger.phase4.config` | Configuration loading |
+| `com.helger.phase4.crypto` | Crypto factory initialization and key loading |
+| `com.helger.phase4.incoming` | Incoming message processing |
+| `com.helger.phase4.dump` | Message dump operations |
+| `com.helger.phase4.sender` | Outgoing message sending |
+| `org.apache.wss4j` | WSS4J signing, verification, encryption, decryption |
+| `org.apache.http` | Apache HttpClient HTTP transport |
+
+## Basic log4j2 configuration
+
+Place a `log4j2.xml` file on the classpath (e.g., `src/main/resources/log4j2.xml`):
+
+```xml log4j2.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="info" strict="true">
+  <Appenders>
+    <Console name="STDOUT" target="SYSTEM_OUT">
+      <PatternLayout pattern="[%date{ISO8601}] [phase4] [%-5level] [%thread] %msg -- %location%n" />
+    </Console>
+  </Appenders>
+  <Loggers>
+    <Root level="info">
+      <AppenderRef ref="STDOUT" />
+    </Root>
+  </Loggers>
+</Configuration>
+```
+
+This configuration outputs all `INFO` and above log events to stdout with a timestamp, level, thread name, message, and source location.
+
+## Enabling debug logging for phase4
+
+To see detailed phase4 activity (e.g., message parsing, PMode resolution, signature operations), lower the log level for the `com.helger.phase4` package:
+
+```xml log4j2.xml
+<Loggers>
+  <Logger name="com.helger.phase4" level="debug" additivity="false">
+    <AppenderRef ref="STDOUT" />
+  </Logger>
+  <Root level="info">
+    <AppenderRef ref="STDOUT" />
+  </Root>
+</Loggers>
+```
+
+## Enabling HTTP wire logging
+
+To log the raw bytes of every HTTP request and response sent by the Apache HttpClient, enable debug logging for the Apache HTTP wire logger:
+
+```xml log4j2.xml
+<Loggers>
+  <!-- Raw HTTP bytes (very verbose) -->
+  <Logger name="org.apache.http.wire" level="debug" additivity="false">
+    <AppenderRef ref="STDOUT" />
+  </Logger>
+  <!-- HTTP headers only -->
+  <Logger name="org.apache.http.headers" level="debug" additivity="false">
+    <AppenderRef ref="STDOUT" />
+  </Logger>
+  <Root level="info">
+    <AppenderRef ref="STDOUT" />
+  </Root>
+</Loggers>
+```
+
+<Warning>
+HTTP wire logging produces very large output that includes message payloads. Enable it only for short debugging sessions and never in production.
+</Warning>
+
+## Enabling WSS4J security debug logging
+
+```xml log4j2.xml
+<Logger name="org.apache.wss4j" level="debug" additivity="false">
+  <AppenderRef ref="STDOUT" />
+</Logger>
+```
+
+## Per-thread log prefix and suffix
+
+`Phase4LogCustomizer` lets you annotate log messages with a per-thread prefix or suffix. This is useful for correlating messages in multi-threaded servers:
+
+```java
+import com.helger.phase4.logging.Phase4LogCustomizer;
+
+// Set a prefix for the current thread's phase4 log output
+Phase4LogCustomizer.setThreadLocalLogPrefix("[msg:" + messageID + "] ");
+try {
+    // ... process the message ...
+} finally {
+    // Always clear to avoid leaking context to the next request on this thread
+    Phase4LogCustomizer.clearThreadLocals();
+}
+```
+
+Or use the built-in helper that clears automatically:
+
+```java
+import com.helger.phase4.logging.Phase4LogCustomizer;
+
+Phase4LogCustomizer.runWithLogPrefixAndSuffix(
+    "[msg:" + messageID + "] ",
+    null,
+    () -> {
+        // All phase4 log statements inside this block will have the prefix
+        processMessage();
+    }
+);
+```
+
+## Custom log message transformation
+
+If you need to transform all log messages globally (not per-thread), you can extend `Phase4LoggerFactory` or wrap the loggers. However, the standard approach is to use the thread-local prefix/suffix mechanism above.
+
+## Complete log4j2.xml for development
+
+The following configuration enables debug output for phase4 while keeping other libraries at `INFO`:
+
+```xml log4j2.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="warn" strict="true">
+  <Appenders>
+    <Console name="STDOUT" target="SYSTEM_OUT">
+      <PatternLayout pattern="[%date{ISO8601}] [%-5level] [%thread] %logger{36} - %msg%n" />
+    </Console>
+  </Appenders>
+  <Loggers>
+    <!-- Detailed phase4 output -->
+    <Logger name="com.helger.phase4" level="debug" additivity="false">
+      <AppenderRef ref="STDOUT" />
+    </Logger>
+    <!-- WSS4J security operations -->
+    <Logger name="org.apache.wss4j" level="info" additivity="false">
+      <AppenderRef ref="STDOUT" />
+    </Logger>
+    <Root level="info">
+      <AppenderRef ref="STDOUT" />
+    </Root>
+  </Loggers>
+</Configuration>
+```

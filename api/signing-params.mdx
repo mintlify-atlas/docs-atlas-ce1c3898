@@ -1,0 +1,133 @@
+---
+title: AS4SigningParams
+description: Signing parameters for AS4 messages including algorithm selection and certificate constraints.
+---
+
+**Package:** `com.helger.phase4.crypto`  
+**Maven artifact:** `com.helger.phase4:phase4-lib`
+
+`AS4SigningParams` holds all parameters controlling how an outgoing AS4 message is signed and how incoming signatures are verified.
+
+## Default values
+
+| Constant | Value | Description |
+|---|---|---|
+| `DEFAULT_KEY_IDENTIFIER_TYPE` | `BST_DIRECT_REFERENCE` | Key identifier type |
+| `DEFAULT_USE_SINGLE_CERTIFICATE` | `true` | Use `#X509v3` BST value type |
+
+## Setter methods
+
+<ParamField path="body.setKeyIdentifierType" type="ECryptoKeyIdentifierType">
+  Defines how the signing certificate is transmitted in the message. Default: `BST_DIRECT_REFERENCE`. Since 0.11.0.
+</ParamField>
+
+<ParamField path="body.setAlgorithmSign" type="ECryptoAlgorithmSign">
+  The XML signature algorithm. **Mandatory to enable signing.** Also requires `setAlgorithmSignDigest`.
+</ParamField>
+
+<ParamField path="body.setAlgorithmSignDigest" type="ECryptoAlgorithmSignDigest">
+  The digest algorithm for the signature. **Mandatory to enable signing.** Also requires `setAlgorithmSign`.
+</ParamField>
+
+<ParamField path="body.setAlgorithmC14N" type="ECryptoAlgorithmC14N">
+  The XML canonicalization algorithm. Default: Exclusive C14N without comments (`C14N_EXCL_OMIT_COMMENTS`). Since 0.10.6.
+</ParamField>
+
+<ParamField path="body.setSecurityProvider" type="Provider">
+  Sets the same `java.security.Provider` for both signing and verification. Since 2.1.3.
+</ParamField>
+
+<ParamField path="body.setSecurityProviderSign" type="Provider">
+  JCA/JCE provider for signing only. Since 2.4.0.
+</ParamField>
+
+<ParamField path="body.setSecurityProviderVerify" type="Provider">
+  JCA/JCE provider for signature verification only. Since 2.4.0.
+</ParamField>
+
+<ParamField path="body.setUseSingleCertificate" type="boolean" default="true">
+  Controls the BST value type. `true` uses `#X509v3` (single cert, e.g. Peppol); `false` uses `#X509PKIPathv1` (certificate chain). Since 2.1.5.
+</ParamField>
+
+<ParamField path="body.setWSSecSignatureCustomizer" type="IWSSecSignatureCustomizer">
+  Low-level customizer for WSS4J `WSSecSignature` objects.
+</ParamField>
+
+<ParamField path="body.setSubjectCertConstraints" type="Collection&lt;Pattern&gt;">
+  Collection of regular expression patterns that the signing certificate's subject DN must match. `null` or empty means no constraint is enforced. Since 3.0.7.
+</ParamField>
+
+## Convenience methods
+
+```java
+// isSigningEnabled returns true when both algorithm and digest are set
+boolean active = params.isSigningEnabled();
+
+// Set algorithm and digest from a PMode security configuration
+params.setFromPMode(pmodeLeg.getSecurity());
+```
+
+## Static factory
+
+```java
+// Creates a default instance with RSA-SHA256 + SHA256 + Exclusive C14N
+AS4SigningParams defaults = AS4SigningParams.createDefault();
+```
+
+## ECryptoAlgorithmSign
+
+XML signature algorithms supported by phase4.
+
+| Enum value | ID | Notes |
+|---|---|---|
+| `RSA_SHA_256` | `rsa-sha-256` | **Default** |
+| `RSA_SHA_384` | `rsa-sha-384` | |
+| `RSA_SHA_512` | `rsa-sha-512` | |
+| `ECDSA_SHA_256` | `ecdsa-sha-256` | |
+| `ECDSA_SHA_384` | `ecdsa-sha-384` | |
+| `ECDSA_SHA_512` | `ecdsa-sha-512` | |
+| `EDDSA_ED25519` | `eddsa-ed25519` | |
+| `EDDSA_ED448` | `eddsa-ed448` | |
+| `RSA_SHA_256_MGF1` | `rsa-sha-256-mgf1` | RSASSA-PSS with SHA-256 |
+| `RSA_SHA_384_MGF1` | `rsa-sha-384-mgf1` | RSASSA-PSS with SHA-384 |
+| `RSA_SHA_512_MGF1` | `rsa-sha-512-mgf1` | RSASSA-PSS with SHA-512 |
+| `RSA_SHA3_256_MGF1` | `rsa-sha3-256-mgf1` | RSASSA-PSS with SHA3-256 |
+| `RSA_SHA3_384_MGF1` | `rsa-sha3-384-mgf1` | RSASSA-PSS with SHA3-384 |
+| `RSA_SHA3_512_MGF1` | `rsa-sha3-512-mgf1` | RSASSA-PSS with SHA3-512 |
+
+```java
+ECryptoAlgorithmSign.SIGN_ALGORITHM_DEFAULT // RSA_SHA_256
+```
+
+## ECryptoAlgorithmSignDigest
+
+Digest algorithms for XML signatures.
+
+| Enum value | ID | Notes |
+|---|---|---|
+| `DIGEST_SHA_256` | `sha-256` | **Default** |
+| `DIGEST_SHA_384` | `sha-384` | |
+| `DIGEST_SHA_512` | `sha-512` | |
+
+```java
+ECryptoAlgorithmSignDigest.SIGN_DIGEST_ALGORITHM_DEFAULT // DIGEST_SHA_256
+```
+
+## Example
+
+```java
+import com.helger.phase4.crypto.AS4SigningParams;
+import com.helger.phase4.crypto.ECryptoAlgorithmSign;
+import com.helger.phase4.crypto.ECryptoAlgorithmSignDigest;
+
+// Custom signing parameters
+AS4SigningParams params = new AS4SigningParams()
+    .setAlgorithmSign(ECryptoAlgorithmSign.RSA_SHA_256)
+    .setAlgorithmSignDigest(ECryptoAlgorithmSignDigest.DIGEST_SHA_256)
+    .setUseSingleCertificate(true);
+
+// Or use in a sender builder directly
+builder.signingParams()
+    .setAlgorithmSign(ECryptoAlgorithmSign.ECDSA_SHA_256)
+    .setAlgorithmSignDigest(ECryptoAlgorithmSignDigest.DIGEST_SHA_256);
+```

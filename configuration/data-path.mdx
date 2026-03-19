@@ -1,0 +1,148 @@
+---
+title: "Data path and storage"
+description: "Configure where phase4 stores persistent data, PModes, duplicate detection state, and message dumps."
+---
+
+phase4 can persist several categories of data to disk. Two configuration properties control where that data lives and whether persistence is enabled at all.
+
+## Data path (`global.datapath`)
+
+The **data path** is the root directory for persistent application data managed by phase4's internal managers.
+
+| Property | Default | Description |
+|---|---|---|
+| `global.datapath` | `phase4-data` | Root directory for persistent data. Relative paths are resolved against the application working directory. |
+
+```properties application.properties
+# Relative path (resolved from working directory)
+global.datapath=phase4-data
+
+# Or an absolute path
+#global.datapath=/var/lib/as4/data
+```
+
+When `phase4.manager.inmemory=false`, the following are stored under `global.datapath`:
+
+- **PModes** — as XML files, one file per PMode.
+- **Duplicate detection state** — incoming message IDs retained for the configured disposal window.
+
+## In-memory vs. file-based managers (`phase4.manager.inmemory`)
+
+| Property | Default | Description |
+|---|---|---|
+| `phase4.manager.inmemory` | `true` | When `true`, all managers operate in memory only. When `false`, data is persisted to `global.datapath`. |
+
+<CodeGroup>
+
+```properties In-memory (default)
+# PModes and state live only in memory.
+# All data is lost when the application restarts.
+phase4.manager.inmemory=true
+```
+
+```properties File-based persistence
+# PModes are written to XML files under global.datapath.
+# Data survives application restarts.
+phase4.manager.inmemory=false
+global.datapath=/var/lib/as4/data
+```
+
+</CodeGroup>
+
+<Note>
+For most production deployments, `phase4.manager.inmemory=true` is the right choice. PModes are typically constructed programmatically at startup and do not need to survive restarts. Set it to `false` only if you use the web-based PMode management UI or require runtime PMode persistence.
+</Note>
+
+## Duplicate detection window
+
+phase4 records the Message ID of every accepted incoming message for a configurable time window. If the same Message ID arrives again within the window, the message is rejected as a duplicate.
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.incoming.duplicatedisposal.minutes` | `long` | `10` | Minutes that incoming message IDs are retained. |
+
+```properties application.properties
+# Keep IDs for 30 minutes
+phase4.incoming.duplicatedisposal.minutes=30
+```
+
+When `phase4.manager.inmemory=true`, the duplicate detection state is also kept in memory and resets on restart.
+
+## Dump path (`phase4.dump.path`)
+
+Message dumps are stored separately from the main data path, under `phase4.dump.path`.
+
+| Property | Default | Description |
+|---|---|---|
+| `phase4.dump.path` | `phase4-dumps` | Root directory for message dump files. Relative paths are resolved against the application working directory. |
+
+```properties application.properties
+phase4.dump.path=/var/lib/as4/dumps
+```
+
+Dumping is controlled at runtime by registering a dumper with `AS4DumpManager`. The built-in file-based dumpers write files under this path.
+
+## What is stored in the dump path
+
+Dump files are organized into subdirectories by direction:
+
+| Subdirectory | Contents |
+|---|---|
+| `incoming/` | Files written by `AS4IncomingDumperFileBased` — one file per received AS4 message. |
+| `outgoing/` | Files written by `AS4OutgoingDumperFileBased` — one file per sent AS4 message, per attempt. |
+
+Each file is a raw byte stream of the HTTP message body (optionally including HTTP headers if the dumper is configured to include them).
+
+## Enabling message dumps
+
+Dumping is **off by default**. Register a dumper at application startup:
+
+```java
+import com.helger.phase4.dump.AS4DumpManager;
+import com.helger.phase4.dump.AS4IncomingDumperFileBased;
+import com.helger.phase4.dump.AS4OutgoingDumperFileBased;
+
+// Use the dump path from configuration (phase4.dump.path)
+AS4DumpManager.setIncomingDumper(new AS4IncomingDumperFileBased());
+AS4DumpManager.setOutgoingDumper(new AS4OutgoingDumperFileBased());
+```
+
+Or specify a fixed directory:
+
+```java
+import java.io.File;
+import com.helger.phase4.dump.AS4DumpManager;
+import com.helger.phase4.dump.AS4IncomingDumperFileBased;
+import com.helger.phase4.dump.AS4OutgoingDumperFileBased;
+
+File dumpDir = new File("/var/lib/as4/dumps");
+AS4DumpManager.setIncomingDumper(
+    AS4IncomingDumperFileBased.createForDirectory(dumpDir));
+AS4DumpManager.setOutgoingDumper(
+    AS4OutgoingDumperFileBased.createForDirectory(dumpDir));
+```
+
+To disable dumping at runtime:
+
+```java
+AS4DumpManager.setIncomingDumper(null);
+AS4DumpManager.setOutgoingDumper(null);
+```
+
+## Full storage configuration example
+
+```properties application.properties
+# Persistent data (PModes, duplicate detection)
+global.datapath=/var/lib/as4/data
+phase4.manager.inmemory=false
+
+# Duplicate detection window
+phase4.incoming.duplicatedisposal.minutes=30
+
+# Message dumps
+phase4.dump.path=/var/lib/as4/dumps
+```
+
+<Tip>
+In containerized deployments, mount a persistent volume at the same path for both `global.datapath` and `phase4.dump.path` so that data and dumps survive container restarts.
+</Tip>

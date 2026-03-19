@@ -1,0 +1,195 @@
+---
+title: Phase4PeppolSender
+description: Peppol AS4 profile sender for sending SBDH-wrapped documents via the Peppol network.
+---
+
+**Package:** `com.helger.phase4.peppol`  
+**Maven artifact:** `com.helger.phase4:phase4-peppol-client`
+
+`Phase4PeppolSender` is the entry point for sending AS4 messages over the Peppol network. It handles Standard Business Document Header (SBDH) creation, payload compression, SMP endpoint lookup, and certificate validation automatically.
+
+## Factory methods
+
+```java
+// Builder that creates the SBDH automatically from payload element
+Phase4PeppolSender.PeppolUserMessageBuilder builder = Phase4PeppolSender.builder();
+
+// Builder when you already have a serialized Standard Business Document
+Phase4PeppolSender.PeppolUserMessageSBDHBuilder sbdhBuilder = Phase4PeppolSender.sbdhBuilder();
+```
+
+## createSBDH (static utility)
+
+```java
+StandardBusinessDocument sbd = Phase4PeppolSender.createSBDH(
+    IParticipantIdentifier aSenderID,
+    IParticipantIdentifier aReceiverID,
+    IDocumentTypeIdentifier aDocTypeID,
+    IProcessIdentifier aProcID,
+    String sCountryC1,          // nullable
+    String sInstanceIdentifier, // nullable - random UUID if omitted
+    String sStandard,           // nullable - derived from payload namespace
+    String sTypeVersion,        // nullable - derived from doctype ID
+    String sType,               // nullable - derived from payload local name
+    Element aPayloadElement     // required
+);
+```
+
+Since 3.1.0.
+
+## PeppolUserMessageBuilder (builder)
+
+### Required fields
+
+<ParamField path="body.senderParticipantID" type="IParticipantIdentifier" required>
+  Peppol participant ID of the C1 (sender). Sets the SBDH sender and `originalSender` user message property.
+</ParamField>
+
+<ParamField path="body.receiverParticipantID" type="IParticipantIdentifier" required>
+  Peppol participant ID of the C4 (receiver). Sets the SBDH receiver and `finalRecipient` user message property.
+</ParamField>
+
+<ParamField path="body.documentTypeID" type="IDocumentTypeIdentifier" required>
+  Peppol document type identifier. Automatically sets the `action` field.
+</ParamField>
+
+<ParamField path="body.processID" type="IProcessIdentifier" required>
+  Peppol process identifier. Automatically sets the `service` field.
+</ParamField>
+
+<ParamField path="body.senderPartyID" type="String" required>
+  The CN part of the Peppol AP certificate (e.g. `POP000123`). Must match the certificate used for signing.
+</ParamField>
+
+<ParamField path="body.payload" type="AS4OutgoingAttachment" required>
+  The payload to send. Use `AS4OutgoingAttachment.Builder` to construct.
+</ParamField>
+
+<ParamField path="body.endpointDetailProvider" type="IAS4EndpointDetailProvider" required>
+  Endpoint discovery provider. Use `smpClient()` for SMP-based lookup or `receiverEndpointDetails()` for static configuration.
+</ParamField>
+
+### Identity and routing
+
+```java
+builder
+    .senderParticipantID(IF.createParticipantIdentifierWithDefaultScheme("0088:5790000436057"))
+    .receiverParticipantID(IF.createParticipantIdentifierWithDefaultScheme("0088:5790000435999"))
+    .documentTypeID(IF.createDocumentTypeIdentifierWithDefaultScheme(
+        "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2::Invoice##..."))
+    .processID(IF.createProcessIdentifierWithDefaultScheme(
+        "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0"))
+    .senderPartyID("POP000123");
+```
+
+### Endpoint discovery
+
+<ParamField path="body.smpClient" type="SMPClientReadOnly">
+  SMP client instance used to perform Peppol SMP lookups. Internally creates an `AS4EndpointDetailProviderPeppol`.
+</ParamField>
+
+<ParamField path="body.receiverEndpointDetails(X509Certificate, String)" type="void">
+  Set endpoint statically without SMP lookup. Use for testing or pre-resolved endpoints.
+</ParamField>
+
+<ParamField path="body.receiverEndpointDetails(EndpointType)" type="void">
+  Set endpoint from an already-resolved Peppol `EndpointType` SMP response. Since 2.7.6.
+</ParamField>
+
+### Payload options
+
+<ParamField path="body.payloadMimeType" type="IMimeType" default="application/xml">
+  MIME type of the payload. Rarely needs to be changed.
+</ParamField>
+
+<ParamField path="body.compressPayload" type="boolean" default="true">
+  Whether to apply AS4 GZip compression to the payload.
+</ParamField>
+
+<ParamField path="body.payloadContentID" type="String">
+  Custom Content-ID for the payload MIME part. Random by default. Since 1.3.1.
+</ParamField>
+
+<ParamField path="body.countryC1" type="String">
+  Country code of C1 per Peppol Business Message Envelope 2.0. Optional. Since 2.1.3.
+</ParamField>
+
+### Certificate validation
+
+<ParamField path="body.checkReceiverAPCertificate" type="boolean" default="true">
+  Whether to validate the receiver AP certificate against the Peppol CA. Since 1.3.10.
+</ParamField>
+
+<ParamField path="body.peppolAP_CAChecker" type="TrustedCAChecker">
+  Override the Peppol CA checker used for receiver certificate validation. Since 3.0.0.
+</ParamField>
+
+<ParamField path="body.certificateConsumer" type="IPhase4PeppolCertificateCheckResultHandler">
+  Optional callback receiving the AP certificate and the validation result.
+</ParamField>
+
+### Callbacks
+
+<ParamField path="body.endpointURLConsumer" type="Consumer&lt;String&gt;">
+  Optional callback receiving the resolved AP endpoint URL. Since 1.3.3.
+</ParamField>
+
+<ParamField path="body.technicalContactConsumer" type="Consumer&lt;String&gt;">
+  Optional callback receiving the technical contact from the SMP response. Since 3.2.0.
+</ParamField>
+
+### Sending
+
+```java
+EAS4UserMessageSendResult result = builder.sendMessageAndCheckForReceipt();
+```
+
+## Complete example
+
+```java
+import com.helger.phase4.peppol.Phase4PeppolSender;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.phase4.crypto.AS4CryptoFactoryConfiguration;
+import com.helger.peppolid.factory.PeppolIdentifierFactory;
+import com.helger.smpclient.peppol.SMPClientReadOnly;
+import com.helger.smpclient.url.PeppolNaptrURLProvider;
+import com.helger.mime.CMimeType;
+
+final PeppolIdentifierFactory IF = Phase4PeppolSender.IF;
+
+// SMP client pointing to Peppol SMP
+SMPClientReadOnly smpClient = new SMPClientReadOnly(
+    Phase4PeppolSender.URL_PROVIDER,
+    IF.createParticipantIdentifierWithDefaultScheme("0088:5790000435999"),
+    ESML.DIGIT_PRODUCTION
+);
+
+// Load crypto factory from application.properties
+AS4CryptoFactoryConfiguration cryptoFactory =
+    AS4CryptoFactoryConfiguration.getDefaultInstance();
+
+EAS4UserMessageSendResult result = Phase4PeppolSender.builder()
+    .cryptoFactorySign(cryptoFactory)
+    .cryptoFactoryCrypt(cryptoFactory)
+    .senderParticipantID(IF.createParticipantIdentifierWithDefaultScheme("0088:5790000436057"))
+    .receiverParticipantID(IF.createParticipantIdentifierWithDefaultScheme("0088:5790000435999"))
+    .documentTypeID(IF.createDocumentTypeIdentifierWithDefaultScheme(
+        "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2::Invoice##urn:cen.eu:en16931:2017#compliant#urn:fdc:peppol.eu:2017:poacc:billing:3.0::2.1"))
+    .processID(IF.createProcessIdentifierWithDefaultScheme(
+        "urn:fdc:peppol.eu:2017:poacc:billing:01:1.0"))
+    .senderPartyID("POP000123")
+    .countryC1("AT")
+    .smpClient(smpClient)
+    .payload(
+        AS4OutgoingAttachment.builder()
+            .data(invoiceXmlBytes)
+            .mimeType(CMimeType.APPLICATION_XML)
+            .build()
+    )
+    .sendMessageAndCheckForReceipt(ex -> LOGGER.error("Peppol send failed", ex));
+
+if (result.isSuccess()) {
+    System.out.println("Invoice sent via Peppol");
+}
+```

@@ -1,0 +1,150 @@
+---
+title: "Configuration properties"
+description: "All configuration properties recognized by phase4, their default values, and how to provide a custom configuration."
+---
+
+phase4 reads its configuration from the standard [helger-config](https://github.com/phax/ph-commons/tree/master/ph-config) stack. At runtime the library merges values from multiple sources in priority order:
+
+1. Java system properties (`-Dproperty=value`)
+2. Environment variables
+3. `private-application.properties` (classpath)
+4. `application.properties` (classpath)
+
+Place your settings in `application.properties` on the classpath. To override individual values without modifying that file, use `private-application.properties` (higher priority) or Java system properties.
+
+<Note>
+The legacy files `phase4.properties` and `private-phase4.properties` are still supported for backward compatibility but are deprecated since 4.0.1. Migrate to `application.properties`.
+</Note>
+
+## All configuration properties
+
+The properties below are all read by `AS4Configuration` in `com.helger.phase4.config`.
+
+### Global runtime mode
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `global.debug` | `boolean` | `false` | Enables global debug mode. Set to `true` during development to relax some checks (e.g., allows plain-HTTP endpoints). |
+| `global.production` | `boolean` | `false` | Enables production mode. Influences behaviour in some profile validators. |
+| `global.nostartupinfo` | `boolean` | `true` | When `true`, suppresses the startup information log line that lists the active configuration. |
+
+### Data storage
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `global.datapath` | `string` | `phase4-data` | Base directory for persistent data files such as PModes. Relative to the application working directory or absolute. See [Data path](/configuration/data-path). |
+| `phase4.manager.inmemory` | `boolean` | `true` | When `true`, managers (PMode, duplicate detection) are kept in memory only and **not** persisted to disk. Set to `false` to persist PModes as XML files under `global.datapath`. |
+
+### Message dumps
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.dump.path` | `string` | `phase4-dumps` | Base directory where incoming and outgoing message dumps are written. Relative to the application working directory or absolute. See [Data path](/configuration/data-path). |
+
+### Security and cryptography
+
+Keystore and truststore properties use the prefix `org.apache.wss4j.crypto.merlin.`. See [Crypto setup](/configuration/crypto-setup) for the full reference.
+
+### Duplicate detection
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.incoming.duplicatedisposal.minutes` | `long` | `10` | Number of minutes that incoming message IDs are retained for duplicate detection. After this window, the same message ID can be accepted again. |
+
+### Endpoint address
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.endpoint.address` | `string` | _(none)_ | The public URL of this AS4 access point. Required by some profiles (e.g., Peppol production requires `https`). |
+
+### AS4 profile
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.default.profile` | `string` | _(none)_ | The default AS4 profile ID used when no profile is specified on the sender builder. Example: `peppol`. (Replaces `phase4.profile` which is still accepted as a fallback.) |
+
+### Error handling
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.errormsg.include.stacktraces` | `boolean` | `false` | When `true`, Java stack traces are included in outgoing AS4 error messages. Disable in production to avoid information leakage. |
+
+### WSS4J synchronization
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.wss4j.syncsecurity` | `boolean` | `false` | When `true`, all WSS4J sign/verify and encrypt/decrypt operations are synchronized. Enable when multiple threads in the same JVM share the same WSS4J crypto object. |
+
+### Compatibility
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `phase4.compatibility.domibus` | `boolean` | `false` | Enable special Domibus compatibility workarounds. Required in environments where phase4 communicates with multiple Domibus nodes. |
+| `phase4.http.response.accept.allstatuscodes` | `boolean` | `true` | When `true` (the default since 4.1.1), all HTTP response status codes are accepted. Set to `false` to restore the pre-4.1.0 behaviour that rejected responses with status ≥ 300. |
+
+## Minimal application.properties example
+
+```properties application.properties
+# Runtime mode
+global.debug=false
+global.production=true
+global.nostartupinfo=true
+
+# Data storage
+global.datapath=/var/lib/as4/data
+phase4.manager.inmemory=false
+
+# Message dumps
+phase4.dump.path=/var/lib/as4/dumps
+
+# This AP's public endpoint URL
+phase4.endpoint.address=https://as4.example.com/as4
+
+# Keystore (Merlin/WSS4J format)
+org.apache.wss4j.crypto.merlin.keystore.type=PKCS12
+org.apache.wss4j.crypto.merlin.keystore.file=/etc/as4/keystore.p12
+org.apache.wss4j.crypto.merlin.keystore.password=secret
+org.apache.wss4j.crypto.merlin.keystore.alias=mykey
+org.apache.wss4j.crypto.merlin.keystore.private.password=secret
+
+# Trust store
+org.apache.wss4j.crypto.merlin.truststore.type=PKCS12
+org.apache.wss4j.crypto.merlin.truststore.file=/etc/as4/truststore.p12
+org.apache.wss4j.crypto.merlin.truststore.password=peppol
+```
+
+## Providing a custom configuration programmatically
+
+For testing or programmatic control, you can replace the global configuration object before any phase4 code runs:
+
+```java
+import com.helger.config.ConfigFactory;
+import com.helger.config.fallback.ConfigWithFallback;
+import com.helger.config.fallback.IConfigWithFallback;
+import com.helger.config.source.MultiConfigurationValueProvider;
+import com.helger.phase4.config.AS4Configuration;
+
+// Build a custom value provider (example: start from the default and override one property)
+MultiConfigurationValueProvider vp = ConfigFactory.createDefaultValueProvider();
+// ... add or override sources as needed ...
+
+IConfigWithFallback customConfig = new ConfigWithFallback(vp);
+
+// Install globally — call this early, before any AS4 operations
+AS4Configuration.setConfig(customConfig);
+```
+
+<Warning>
+`AS4Configuration.setConfig()` is intended for testing. In production, prefer `application.properties` or environment variables so that configuration is externalized from code.
+</Warning>
+
+## Priority order at a glance
+
+```
+Java system properties     (highest)
+Environment variables
+private-application.properties
+application.properties     (lowest among file sources)
+```
+
+All sources are merged — a property defined in a higher-priority source wins.

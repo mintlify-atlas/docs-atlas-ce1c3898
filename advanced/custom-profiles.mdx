@@ -1,0 +1,276 @@
+---
+title: Custom Profiles
+description: Learn how to implement and register a custom AS4 profile in phase4 using the SPI mechanism.
+---
+
+
+phase4 uses a Service Provider Interface (SPI) mechanism for profile registration. This allows you to bundle a custom profile as an independent library that is automatically discovered at runtime simply by being on the classpath.
+
+## Core interfaces
+
+<CardGroup cols={2}>
+  <Card title="IAS4Profile" icon="puzzle">
+    Defines a profile's ID, name, validator, and PMode provider
+  </Card>
+  <Card title="IAS4ProfileRegistrarSPI" icon="plug">
+    SPI interface for registering one or more profiles
+  </Card>
+  <Card title="IAS4ProfileValidator" icon="shield">
+    Validates PModes and messages against profile rules
+  </Card>
+  <Card title="IAS4ProfilePModeProvider" icon="network">
+    Creates or retrieves a PMode for given party identifiers
+  </Card>
+</CardGroup>
+
+## IAS4Profile
+
+`IAS4Profile` is the main descriptor interface. The default implementation is `AS4Profile`.
+
+```java
+public interface IAS4Profile extends IHasID<String>, IHasDisplayName {
+    // Returns the optional validator (may be null)
+    @Nullable IAS4ProfileValidator getValidator();
+
+    // Creates a PMode template (not yet stored in the manager)
+    @NonNull PMode createPModeTemplate(
+        @NonNull @Nonempty String sInitiatorID,
+        @NonNull @Nonempty String sResponderID,
+        @Nullable String sAddress
+    );
+
+    // Returns the PMode ID provider for this profile
+    @NonNull IPModeIDProvider getPModeIDProvider();
+
+    // Whether this profile is deprecated
+    boolean isDeprecated();
+
+    // Whether to invoke the SPI handler for AS4 ping messages (since v2.5.3)
+    boolean isInvokeSPIForPingMessage();
+}
+```
+
+## IAS4ProfilePModeProvider
+
+A functional interface that either retrieves an existing PMode or creates a new one:
+
+```java
+@FunctionalInterface
+public interface IAS4ProfilePModeProvider {
+    @Nullable PMode getOrCreatePMode(
+        @NonNull @Nonempty String sInitiatorID,
+        @NonNull @Nonempty String sResponderID,
+        @Nullable String sAddress
+    );
+}
+```
+
+## IAS4ProfileValidator
+
+Implement `IAS4ProfileValidator` to enforce profile-specific rules at runtime:
+
+```java
+public interface IAS4ProfileValidator {
+    // Validate the PMode configuration
+    default void validatePMode(
+        @NonNull IPMode aPMode,
+        @NonNull ErrorList aErrorList,
+        @NonNull EAS4ProfileValidationMode eValidationMode
+    ) {}
+
+    // Validate identity of the initiator (e.g. TLS certificate check)
+    default void validateInitiatorIdentity(
+        @NonNull Ebms3UserMessage aUserMsg,
+        @Nullable X509Certificate aSignCert,
+        @NonNull IAS4IncomingMessageMetadata aMessageMetadata,
+        @NonNull ErrorList aErrorList
+    ) {}
+
+    // Validate a user message
+    default void validateUserMessage(
+        @NonNull Ebms3UserMessage aUserMsg,
+        @NonNull ErrorList aErrorList
+    ) {}
+
+    // Validate a signal message
+    default void validateSignalMessage(
+        @NonNull Ebms3SignalMessage aSignalMsg,
+        @NonNull ErrorList aErrorList
+    ) {}
+}
+```
+
+All methods have empty default implementations, so you only need to override the ones relevant to your profile.
+
+## IAS4ProfileRegistrarSPI
+
+```java
+@IsSPIInterface
+public interface IAS4ProfileRegistrarSPI {
+    void registerAS4Profile(@NonNull IAS4ProfileRegistrar aRegistrar);
+}
+```
+
+## Implementation walkthrough
+
+<Steps>
+
+### Implement your PMode factory
+
+Create a utility class that constructs the correct `PMode` for your profile:
+
+```java
+@Immutable
+public final class MyProfilePMode {
+    public static final String DEFAULT_AGREEMENT_ID = "https://example.com/as4/agreement";
+
+    public static PMode createMyProfilePMode(
+            @NonNull @Nonempty final String sInitiatorID,
+            @NonNull @Nonempty final String sResponderID,
+            @Nullable final String sAddress,
+            @NonNull final IPModeIDProvider aPModeIDProvider,
+            final boolean bPersist) {
+
+        final PModeParty aInitiator = PModeParty.createSimple(
+            sInitiatorID, CAS4.DEFAULT_INITIATOR_URL);
+        final PModeParty aResponder = PModeParty.createSimple(
+            sResponderID, CAS4.DEFAULT_RESPONDER_URL);
+
+        // Build the security leg
+        final PModeLegSecurity aSecurity = new PModeLegSecurity();
+        aSecurity.setWSSVersion(EWSSVersion.WSS_111);
+        aSecurity.setX509SignatureAlgorithm(ECryptoAlgorithmSign.RSA_SHA_256);
+        aSecurity.setX509SignatureHashFunction(ECryptoAlgorithmSignDigest.DIGEST_SHA_256);
+        aSecurity.setX509EncryptionAlgorithm(ECryptoAlgorithmCrypt.AES_128_GCM);
+        aSecurity.setPModeAuthorize(false);
+        aSecurity.setSendReceipt(true);
+        aSecurity.setSendReceiptNonRepudiation(true);
+        aSecurity.setSendReceiptReplyPattern(EPModeSendReceiptReplyPattern.RESPONSE);
+
+        final PModeLeg aLeg = new PModeLeg(
+            PModeLegProtocol.createForDefaultSoapVersion(sAddress),
+            PModeLegBusinessInformation.create(null, null, null, CAS4.DEFAULT_MPC_ID),
+            new PModeLegErrorHandling(null, null,
+                ETriState.TRUE, ETriState.TRUE, ETriState.TRUE, ETriState.TRUE),
+            null,
+            aSecurity
+        );
+
+        final PMode aPMode = new PMode(
+            aPModeIDProvider.getPModeID(aInitiator, aResponder),
+            aInitiator, aResponder,
+            DEFAULT_AGREEMENT_ID,
+            EMEP.ONE_WAY, EMEPBinding.PUSH,
+            aLeg, null, null,
+            new PModeReceptionAwareness(
+                ETriState.TRUE, ETriState.TRUE, 1, 10_000, ETriState.TRUE)
+        );
+
+        if (bPersist)
+            MetaAS4Manager.getPModeMgr().createOrUpdatePMode(aPMode);
+
+        return aPMode;
+    }
+}
+```
+
+### Implement the compatibility validator
+
+```java
+public class MyProfileCompatibilityValidator implements IAS4ProfileValidator {
+
+    @Override
+    public void validatePMode(
+            @NonNull final IPMode aPMode,
+            @NonNull final ErrorList aErrorList,
+            @NonNull final EAS4ProfileValidationMode eValidationMode) {
+
+        // Enforce one-way/push only
+        if (aPMode.getMEP() != EMEP.ONE_WAY || aPMode.getMEPBinding() != EMEPBinding.PUSH) {
+            aErrorList.add(SingleError.builderError()
+                .errorText("Only one-way/push is valid for MyProfile")
+                .build());
+        }
+
+        final PModeLeg leg1 = aPMode.getLeg1();
+        if (leg1 == null) {
+            aErrorList.add(SingleError.builderError()
+                .errorText("PMode.Leg[1] is missing")
+                .build());
+        } else {
+            // Validate security settings ...
+        }
+    }
+
+    @Override
+    public void validateUserMessage(
+            @NonNull final Ebms3UserMessage aUserMsg,
+            @NonNull final ErrorList aErrorList) {
+        // Validate message properties, party info, etc.
+    }
+}
+```
+
+### Implement the SPI registrar
+
+```java
+@IsSPIImplementation
+public final class AS4MyProfileRegistrarSPI implements IAS4ProfileRegistrarSPI {
+
+    public static final String AS4_PROFILE_ID = "my-profile";
+    public static final String AS4_PROFILE_NAME = "My Custom Profile";
+    public static final IPModeIDProvider PMODE_ID_PROVIDER =
+        IPModeIDProvider.DEFAULT_DYNAMIC;
+
+    @Override
+    public void registerAS4Profile(@NonNull final IAS4ProfileRegistrar aRegistrar) {
+        final IAS4ProfilePModeProvider aDefaultPModeProvider =
+            (initiatorID, responderID, address) ->
+                MyProfilePMode.createMyProfilePMode(
+                    initiatorID, responderID, address,
+                    PMODE_ID_PROVIDER, true);
+
+        final AS4Profile aProfile = new AS4Profile(
+            AS4_PROFILE_ID,
+            AS4_PROFILE_NAME,
+            MyProfileCompatibilityValidator::new,  // validator supplier
+            aDefaultPModeProvider,
+            PMODE_ID_PROVIDER,
+            false,  // not deprecated
+            false   // do not invoke SPI for ping messages
+        );
+
+        aRegistrar.registerProfile(aProfile);
+    }
+}
+```
+
+### Register via META-INF/services
+
+Create the file `src/main/resources/META-INF/services/com.helger.phase4.profile.IAS4ProfileRegistrarSPI` with the fully qualified class name of your SPI implementation:
+
+```text
+com.example.myprofile.AS4MyProfileRegistrarSPI
+```
+
+</Steps>
+
+<Note>
+Once the artifact is on the classpath, phase4 discovers and registers the profile automatically at startup via `java.util.ServiceLoader`. No further configuration is required.
+</Note>
+
+## Setting a default profile
+
+To configure which profile is used by default, set the configuration property:
+
+```properties
+phase4.default.profile=my-profile
+```
+
+Or programmatically:
+
+```java
+// Access the active profile manager
+IAS4ProfileManager profileMgr = MetaAS4Manager.getProfileMgr();
+profileMgr.setActiveProfile(AS4MyProfileRegistrarSPI.AS4_PROFILE_ID);
+```

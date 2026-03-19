@@ -1,0 +1,223 @@
+---
+title: Message Dumping
+description: Capture raw incoming and outgoing AS4 messages to disk for debugging and audit.
+---
+
+
+phase4 provides a message dump facility that captures the raw byte streams of incoming and outgoing AS4 messages. This is useful for debugging, auditing, and non-repudiation purposes.
+
+## Overview
+
+Dumping is managed through two global interfaces registered in `AS4DumpManager`:
+
+| Interface | Purpose |
+|-----------|---------|
+| `IAS4IncomingDumper` | Captures incoming HTTP request bodies |
+| `IAS4OutgoingDumper` | Captures outgoing HTTP request and response bodies |
+
+Both are `null` by default (no dumping). Once set, every message is passed through the dumper.
+
+## Enabling file-based dumping
+
+<Steps>
+
+### Configure the dump base path
+
+In your `phase4.properties` (or equivalent configuration source):
+
+```properties
+# Relative to the application startup directory
+# Default value: "phase4-dumps"
+phase4.dump.path=/var/data/phase4-dumps
+```
+
+The `AS4Configuration` helper reads this value:
+
+```java
+import com.helger.phase4.config.AS4Configuration;
+
+File dumpDir = AS4Configuration.getDumpBasePathFile();
+// Resolves to an absolute File for "phase4.dump.path"
+```
+
+### Register the incoming dumper
+
+```java
+import com.helger.phase4.dump.AS4DumpManager;
+import com.helger.phase4.dump.AS4IncomingDumperFileBased;
+
+// Use the default path (phase4.dump.path + "incoming/")
+AS4DumpManager.setIncomingDumper(new AS4IncomingDumperFileBased());
+
+// Or specify a custom base directory
+AS4DumpManager.setIncomingDumper(
+    AS4IncomingDumperFileBased.createForDirectory(
+        new File("/var/data/phase4-dumps/incoming")
+    )
+);
+```
+
+### Register the outgoing dumper
+
+```java
+import com.helger.phase4.dump.AS4OutgoingDumperFileBased;
+
+// Use the default path (phase4.dump.path + "outgoing/")
+AS4DumpManager.setOutgoingDumper(new AS4OutgoingDumperFileBased());
+
+// Or specify a custom base directory
+AS4DumpManager.setOutgoingDumper(
+    AS4OutgoingDumperFileBased.createForDirectory(
+        new File("/var/data/phase4-dumps/outgoing")
+    )
+);
+```
+
+</Steps>
+
+## IAS4IncomingDumper
+
+Called once per incoming AS4 request:
+
+```java
+public interface IAS4IncomingDumper {
+    /**
+     * Called when a new AS4 request arrives.
+     * Return an OutputStream to capture the body, or null to skip dumping.
+     * The caller is responsible for closing the stream.
+     */
+    @Nullable OutputStream onNewRequest(
+        @NonNull IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+        @NonNull HttpHeaderMap aHttpHeaderMap
+    ) throws IOException;
+
+    /**
+     * Called after the request has been fully processed.
+     * Only called if onNewRequest returned non-null.
+     */
+    void onEndRequest(
+        @NonNull IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+        @Nullable Exception aCaughtException
+    );
+}
+```
+
+The raw HTTP request body (including MIME boundaries for MTOM/SwA messages) is written to the returned `OutputStream` as bytes are read.
+
+## IAS4OutgoingDumper
+
+Called once per outgoing AS4 message (and once per retry attempt):
+
+```java
+public interface IAS4OutgoingDumper {
+    /**
+     * Called before sending an AS4 message.
+     * - eMsgMode: REQUEST for outgoing messages, RESPONSE for outgoing receipts/errors.
+     * - nTry: 0 = initial attempt, 1 = first retry, etc.
+     * Return an OutputStream to capture the body, or null to skip dumping.
+     */
+    @Nullable OutputStream onBeginRequest(
+        @NonNull EAS4MessageMode eMsgMode,
+        @Nullable IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+        @Nullable IAS4IncomingMessageState aIncomingState,
+        @NonNull @Nonempty String sMessageID,
+        @Nullable HttpHeaderMap aCustomHeaders,
+        @Nonnegative int nTry
+    ) throws IOException;
+
+    /**
+     * Called after the send attempt completes.
+     * Only called if onBeginRequest returned non-null.
+     */
+    void onEndRequest(
+        @NonNull EAS4MessageMode eMsgMode,
+        @Nullable IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+        @Nullable IAS4IncomingMessageState aIncomingState,
+        @NonNull @Nonempty String sMessageID,
+        @Nullable Exception aCaughtException
+    );
+}
+```
+
+### nTry parameter
+
+The `nTry` index tracks which send attempt produced a dump:
+
+- `0` = initial send
+- `1` = first HTTP retry
+- `n` = nth HTTP retry
+
+The default `AS4OutgoingDumperFileBased` uses this index to create separate files per attempt.
+
+## Custom dumper implementation
+
+You can write a custom dumper to send dumps to a message queue, object store, or database:
+
+```java
+public class MyCustomIncomingDumper implements IAS4IncomingDumper {
+    @Override
+    public OutputStream onNewRequest(
+            final IAS4IncomingMessageMetadata metadata,
+            final HttpHeaderMap headers) throws IOException {
+        // Return a stream that writes to your target storage
+        // e.g. an S3 upload stream, Kafka producer stream, etc.
+        return new MyStorageOutputStream(metadata.getIncomingUniqueID());
+    }
+
+    @Override
+    public void onEndRequest(
+            final IAS4IncomingMessageMetadata metadata,
+            final Exception caughtException) {
+        // Commit the upload, close connections, etc.
+    }
+}
+
+// Register it globally
+AS4DumpManager.setIncomingDumper(new MyCustomIncomingDumper());
+```
+
+## Including HTTP headers in dumps
+
+`AS4IncomingDumperFileBased` and `AS4OutgoingDumperFileBased` both extend abstract base classes that support optional header inclusion:
+
+```java
+// Include HTTP headers in the dump file
+new AS4IncomingDumperFileBased().setIncludeHeaders(true);
+new AS4OutgoingDumperFileBased().setIncludeHeaders(true);
+```
+
+<Warning>
+Including headers in dumps will capture all HTTP headers, which may include sensitive information such as `Authorization` tokens. Ensure dump files are stored securely.
+</Warning>
+
+## Default file naming
+
+The default file providers (`IAS4IncomingDumperFileProvider`, `IAS4OutgoingDumperFileProvider`) use a date-partitioned directory structure:
+
+```
+phase4-dumps/
+  incoming/
+    2026/03/19/
+      {uniqueMessageID}.as4in
+  outgoing/
+    2026/03/19/
+      {messageID}-{nTry}.as4out
+```
+
+## Single-use dumpers
+
+For capturing just one message (e.g. in a test), use the single-use variants:
+
+```java
+import com.helger.phase4.dump.AS4IncomingDumperSingleUse;
+import com.helger.phase4.dump.AS4OutgoingDumperSingleUse;
+
+// Dumps only the next incoming message, then stops
+AS4DumpManager.setIncomingDumper(new AS4IncomingDumperSingleUse(
+    (metadata, headers) -> new FileOutputStream("/tmp/single-dump.as4")
+));
+```
+
+<Tip>
+To disable dumping at any time, call `AS4DumpManager.setIncomingDumper(null)` or `AS4DumpManager.setOutgoingDumper(null)`.
+</Tip>

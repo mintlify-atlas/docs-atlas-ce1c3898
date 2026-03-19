@@ -1,0 +1,255 @@
+---
+title: Peppol Server Setup
+description: Configure Phase4PeppolAS4Servlet, implement IPhase4PeppolIncomingSBDHandlerSPI, and initialise the Peppol receiver checks.
+---
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-peppol-servlet</artifactId>
+</dependency>
+```
+
+## Register the Peppol servlet
+
+`Phase4PeppolAS4Servlet` extends the generic `AS4Servlet` with a built-in `IAS4ServletRequestHandlerCustomizer` that enforces Peppol-specific WS-Security requirements (signing certificates must be presented as a `BinarySecurityToken`).
+
+```xml
+<!-- WEB-INF/web.xml -->
+<servlet>
+  <servlet-name>AS4Servlet</servlet-name>
+  <servlet-class>com.helger.phase4.peppol.servlet.Phase4PeppolAS4Servlet</servlet-class>
+</servlet>
+<servlet-mapping>
+  <servlet-name>AS4Servlet</servlet-name>
+  <url-pattern>/as4</url-pattern>
+</servlet-mapping>
+```
+
+## application.properties keys
+
+The reference web application (`phase4-peppol-server-webapp`) reads the following properties. Copy and adapt them to your own configuration source.
+
+```properties
+# [CHANGEME] Public endpoint URL of this AP — used for receiver verification
+phase4.endpoint.address=https://my-ap.example.com/as4
+
+# [CHANGEME] Public URL of your SMP — enables inbound receiver checks when set
+# smp.url=https://smp.example.com
+
+# Peppol network stage: "prod" or "test"
+peppol.stage=test
+
+# [CHANGEME] Your Peppol Seat ID from your AP certificate
+peppol.seatid=PXX000000
+
+# [CHANGEME] Your organisation's country code (ISO 3166-1 alpha-2)
+peppol.owner.countrycode=DE
+
+# AS4 key store (PKCS12)
+org.apache.wss4j.crypto.merlin.keystore.type=PKCS12
+org.apache.wss4j.crypto.merlin.keystore.file=your-peppol-ap-keys.p12
+org.apache.wss4j.crypto.merlin.keystore.password=peppol
+org.apache.wss4j.crypto.merlin.keystore.alias=cert
+org.apache.wss4j.crypto.merlin.keystore.private.password=peppol
+
+# AP trust store
+org.apache.wss4j.crypto.merlin.truststore.type=PKCS12
+# For test:       truststore/2025/ap-test-truststore.p12
+# For production: truststore/2025/ap-prod-truststore.p12
+org.apache.wss4j.crypto.merlin.truststore.file=truststore/2025/ap-test-truststore.p12
+org.apache.wss4j.crypto.merlin.truststore.password=peppol
+
+# SMP client trust store
+smpclient.truststore.type=PKCS12
+# For test:       truststore/2025/smp-test-truststore.p12
+# For production: truststore/2025/smp-prod-truststore.p12
+smpclient.truststore.path=truststore/2025/smp-test-truststore.p12
+smpclient.truststore.password=peppol
+```
+
+<Note>
+The trust stores referenced above (`ap-test-truststore.p12`, `ap-prod-truststore.p12`, etc.) are bundled inside the `peppol-commons` library. You do not need to supply them separately.
+</Note>
+
+## Application startup — Phase4PeppolWebAppListener pattern
+
+The following shows the initialization pattern used by the reference server. Call this from a `ServletContextListener` or equivalent lifecycle hook.
+
+```java
+import com.helger.phase4.incoming.AS4ServerInitializer;
+import com.helger.phase4.incoming.mgr.AS4ProfileSelector;
+import com.helger.phase4.peppol.servlet.Phase4PeppolDefaultReceiverConfiguration;
+import com.helger.phase4.profile.peppol.AS4PeppolProfileRegistarSPI;
+import com.helger.smpclient.peppol.CachingSMPClientReadOnly;
+
+// 1. Force the Peppol AS4 profile
+AS4ProfileSelector.setCustomDefaultAS4ProfileID(
+    AS4PeppolProfileRegistarSPI.AS4_PROFILE_ID);
+
+// 2. Start the duplicate-detection cleanup job
+AS4ServerInitializer.initAS4Server();
+
+// 3. Configure Peppol receiver checks
+String sSMPURL = "https://smp.example.com";
+String sAPURL  = AS4Configuration.getThisEndpointAddress(); // reads phase4.endpoint.address
+
+if (sSMPURL != null && sAPURL != null) {
+    Phase4PeppolDefaultReceiverConfiguration.setReceiverCheckEnabled(true);
+    Phase4PeppolDefaultReceiverConfiguration.setSMPClient(
+        new CachingSMPClientReadOnly(URI.create(sSMPURL)));
+    Phase4PeppolDefaultReceiverConfiguration.setAS4EndpointURL(sAPURL);
+    Phase4PeppolDefaultReceiverConfiguration.setAPCertificate(myAPCertificate);
+} else {
+    Phase4PeppolDefaultReceiverConfiguration.setReceiverCheckEnabled(false);
+}
+
+// Shutdown on context destroy
+// AS4ServerInitializer.shutdownAS4Server();
+```
+
+## Phase4PeppolDefaultReceiverConfiguration
+
+`Phase4PeppolDefaultReceiverConfiguration` holds the process-wide defaults used by `Phase4PeppolServletMessageProcessorSPI` when verifying inbound messages. All setters are static.
+
+| Setter | Default | Purpose |
+|---|---|---|
+| `setReceiverCheckEnabled(boolean)` | `true` | Enable/disable SMP endpoint lookup |
+| `setSMPClient(ISMPExtendedServiceMetadataProvider)` | `null` | SMP client for endpoint lookup |
+| `setAS4EndpointURL(String)` | `null` | Our own AP URL to compare against SMP result |
+| `setAPCertificate(X509Certificate)` | `null` | Our own AP certificate to compare against SMP result |
+| `setCheckSigningCertificateRevocation(boolean)` | `true` | Check sender certificate via Peppol CA |
+| `setAPCAChecker(TrustedCAChecker)` | Peppol all-AP checker | Trusted CA checker for signing certs |
+| `setPerformSBDHValueChecks(boolean)` | `true` | Validate SBDH field values |
+
+<Warning>
+If `isReceiverCheckEnabled()` is `true` but `getSMPClient()`, `getAS4EndpointURL()`, or `getAPCertificate()` return `null`, the check is automatically disabled and a warning is logged. Always set all three when enabling receiver checks.
+</Warning>
+
+## Per-request override with Phase4PeppolReceiverConfiguration
+
+To override the global defaults for a specific instance of `Phase4PeppolServletMessageProcessorSPI`, build a `Phase4PeppolReceiverConfiguration` using its builder and call `setReceiverCheckData()`.
+
+```java
+import com.helger.phase4.peppol.servlet.Phase4PeppolReceiverConfiguration;
+import com.helger.phase4.peppol.servlet.Phase4PeppolServletMessageProcessorSPI;
+
+Phase4PeppolReceiverConfiguration cfg = Phase4PeppolReceiverConfiguration.builder()
+    .receiverCheckEnabled(true)
+    .serviceMetadataProvider(mySMPClient)
+    .as4EndpointUrl("https://my-ap.example.com/as4")
+    .apCertificate(myAPCertificate)
+    .performSBDHValueChecks(true)
+    .checkSigningCertificateRevocation(true)
+    .apCAChecker(PeppolTrustedCA.peppolProductionAP())
+    .sbdhIdentifierFactoryPeppol()
+    .build();
+
+Phase4PeppolServletMessageProcessorSPI processor =
+    new Phase4PeppolServletMessageProcessorSPI();
+processor.setReceiverCheckData(cfg);
+```
+
+## Implement IPhase4PeppolIncomingSBDHandlerSPI
+
+This is the primary integration point for Peppol receivers. `Phase4PeppolServletMessageProcessorSPI` handles all AS4/SBDH boilerplate and calls every registered `IPhase4PeppolIncomingSBDHandlerSPI` implementation with the already-parsed, verified, and decrypted `PeppolSBDHData`.
+
+Create the service descriptor file:
+
+**`META-INF/services/com.helger.phase4.peppol.servlet.IPhase4PeppolIncomingSBDHandlerSPI`**
+```
+com.example.myapp.MyPeppolSBDHandler
+```
+
+```java
+import com.helger.phase4.peppol.servlet.IPhase4PeppolIncomingSBDHandlerSPI;
+import com.helger.phase4.incoming.IAS4IncomingMessageMetadata;
+import com.helger.phase4.incoming.IAS4IncomingMessageState;
+import com.helger.phase4.ebms3header.Ebms3UserMessage;
+import com.helger.phase4.error.AS4ErrorList;
+import com.helger.peppol.sbdh.PeppolSBDHData;
+import com.helger.http.header.HttpHeaderMap;
+import org.unece.cefact.namespaces.sbdh.StandardBusinessDocument;
+
+public class MyPeppolSBDHandler implements IPhase4PeppolIncomingSBDHandlerSPI {
+
+    @Override
+    public void handleIncomingSBD(
+            IAS4IncomingMessageMetadata aMessageMetadata,
+            HttpHeaderMap aHeaders,
+            Ebms3UserMessage aUserMessage,
+            byte[] aSBDBytes,
+            StandardBusinessDocument aSBD,
+            PeppolSBDHData aPeppolSBD,
+            IAS4IncomingMessageState aState,
+            AS4ErrorList aProcessingErrorMessages) throws Exception {
+
+        // aPeppolSBD contains the fully parsed Peppol SBDH header fields
+        String senderId   = aPeppolSBD.getSenderURIEncoded();
+        String receiverId = aPeppolSBD.getReceiverURIEncoded();
+        String docTypeId  = aPeppolSBD.getDocumentTypeAsIdentifier().getURIEncoded();
+        String processId  = aPeppolSBD.getProcessAsIdentifier().getURIEncoded();
+
+        // aSBDBytes is the raw decompressed SBDH attachment — store or forward as-is
+        persistDocument(aSBDBytes);
+
+        // aSBD is the pre-parsed JAXB model for in-memory access
+        // Serialize it back with SBDMarshaller if needed
+    }
+
+    @Override
+    public void processAS4ResponseMessage(
+            IAS4IncomingMessageMetadata aIncomingMessageMetadata,
+            IAS4IncomingMessageState aIncomingState,
+            String sResponseMessageID,
+            byte[] aResponseBytes,
+            boolean bResponsePayloadIsAvailable,
+            AS4ErrorList aEbmsErrorMessages) {
+        // Optional: called after the Receipt was sent back to the sender
+    }
+
+    private void persistDocument(byte[] bytes) {
+        // Store to database, file system, message queue, etc.
+    }
+}
+```
+
+<Tip>
+Throw any exception from `handleIncomingSBD()` to signal a processing failure. phase4 will convert the exception into an EBMS error and return it to the sender instead of a receipt.
+</Tip>
+
+## Subclassing Phase4PeppolServletMessageProcessorSPI
+
+For Peppol Reporting integration, override `afterSuccessfulPeppolProcessing()`. It is called after all handlers succeed and before the receipt is sent.
+
+```java
+import com.helger.phase4.peppol.servlet.Phase4PeppolServletMessageProcessorSPI;
+import com.helger.phase4.peppol.servlet.Phase4PeppolServletMessageProcessorSPI
+    .createPeppolReportingItemForReceivedMessage;
+import com.helger.phase4.ebms3header.Ebms3UserMessage;
+import com.helger.phase4.incoming.IAS4IncomingMessageState;
+import com.helger.peppol.sbdh.PeppolSBDHData;
+
+public class ReportingMessageProcessor
+    extends Phase4PeppolServletMessageProcessorSPI {
+
+    @Override
+    protected void afterSuccessfulPeppolProcessing(
+            Ebms3UserMessage aUserMessage,
+            PeppolSBDHData aPeppolSBD,
+            IAS4IncomingMessageState aState) {
+
+        var item = createPeppolReportingItemForReceivedMessage(
+            aUserMessage, aPeppolSBD, aState,
+            "PXX000000",  // C3 Seat ID
+            "DE",         // C4 country code
+            "local-id-of-end-user");
+
+        if (item != null) {
+            // persist or send the reporting item
+        }
+    }
+}
+```

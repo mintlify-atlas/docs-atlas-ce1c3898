@@ -1,0 +1,221 @@
+---
+title: "Crypto setup"
+description: "Configure keystores and trust stores for AS4 message signing and encryption using the two built-in crypto factory approaches."
+---
+
+phase4 uses [Apache WSS4J](https://ws.apache.org/wss4j/) (with the `Merlin` provider) for WS-Security operations: signing, signature verification, encryption, and decryption. A **crypto factory** ties the key material to the AS4 stack.
+
+There are two built-in crypto factory classes:
+
+<CardGroup cols={2}>
+  <Card title="AS4CryptoFactoryConfiguration" icon="file">
+    Reads keystore and truststore paths and passwords from the global `application.properties`. The simplest approach for a single, application-wide key pair.
+  </Card>
+  <Card title="AS4CryptoFactoryInMemoryKeyStore" icon="code">
+    Receives an already-loaded `java.security.KeyStore` object at construction time. Use this when you load keys programmatically, from a secrets manager, or need per-PMode key material.
+  </Card>
+</CardGroup>
+
+## Configuration-file-based crypto factory
+
+`AS4CryptoFactoryConfiguration` reads all key material from the active phase4 configuration (typically `application.properties`).
+
+### Required properties
+
+All properties use the prefix `org.apache.wss4j.crypto.merlin.` (the value of `CAS4Crypto.DEFAULT_CONFIG_PREFIX`).
+
+#### Keystore properties
+
+| Property (after prefix) | Required | Description |
+|---|---|---|
+| `keystore.type` | No | Key store type. Default: `JKS`. Use `PKCS12` for `.p12` files. |
+| `keystore.file` | **Yes** | Classpath path or absolute file path to the key store. |
+| `keystore.password` | **Yes** | Password to open the key store. |
+| `keystore.alias` | **Yes** | Alias of the private key entry inside the key store. |
+| `keystore.private.password` | **Yes** | Password for the private key entry (often the same as `keystore.password`). |
+
+#### Trust store properties
+
+The trust store is optional. When omitted, the JRE default CA certificates (`cacerts`) are used.
+
+| Property (after prefix) | Required | Description |
+|---|---|---|
+| `truststore.type` | No | Trust store type. Default: `JKS`. Use `PKCS12` for `.p12` files. |
+| `truststore.file` | No | Classpath path or absolute file path to the trust store. |
+| `truststore.password` | No | Password to open the trust store. |
+
+### Example application.properties
+
+<CodeGroup>
+
+```properties JKS keystore (default)
+org.apache.wss4j.crypto.merlin.keystore.type=JKS
+org.apache.wss4j.crypto.merlin.keystore.file=keys/my-ap-keystore.jks
+org.apache.wss4j.crypto.merlin.keystore.password=keystorepass
+org.apache.wss4j.crypto.merlin.keystore.alias=my-key
+org.apache.wss4j.crypto.merlin.keystore.private.password=keypass
+
+# Optional trust store
+org.apache.wss4j.crypto.merlin.truststore.type=JKS
+org.apache.wss4j.crypto.merlin.truststore.file=keys/truststore.jks
+org.apache.wss4j.crypto.merlin.truststore.password=trustpass
+```
+
+```properties PKCS12 keystore
+org.apache.wss4j.crypto.merlin.keystore.type=PKCS12
+org.apache.wss4j.crypto.merlin.keystore.file=your-peppol-ap-keys.p12
+org.apache.wss4j.crypto.merlin.keystore.password=peppol
+org.apache.wss4j.crypto.merlin.keystore.alias=cert
+org.apache.wss4j.crypto.merlin.keystore.private.password=peppol
+
+# Peppol test trust store
+org.apache.wss4j.crypto.merlin.truststore.type=PKCS12
+org.apache.wss4j.crypto.merlin.truststore.file=truststore/2025/ap-test-truststore.p12
+org.apache.wss4j.crypto.merlin.truststore.password=peppol
+```
+
+</CodeGroup>
+
+### Obtaining the default instance in code
+
+```java
+import com.helger.phase4.crypto.AS4CryptoFactoryConfiguration;
+
+// Reads from the active AS4Configuration (application.properties etc.)
+AS4CryptoFactoryConfiguration cryptoFactory =
+    AS4CryptoFactoryConfiguration.getDefaultInstance();
+
+// Returns null instead of throwing if configuration is incomplete:
+AS4CryptoFactoryConfiguration cryptoFactoryOrNull =
+    AS4CryptoFactoryConfiguration.getDefaultInstanceOrNull();
+```
+
+### Custom configuration prefix
+
+If you need multiple key pairs (e.g., different prefixes for different PModes), pass a custom prefix:
+
+```java
+import com.helger.phase4.crypto.AS4CryptoFactoryConfiguration;
+import com.helger.phase4.config.AS4Configuration;
+
+// Uses properties starting with "myapp.as4.crypto."
+AS4CryptoFactoryConfiguration factory =
+    new AS4CryptoFactoryConfiguration(
+        AS4Configuration.getConfig(),
+        "myapp.as4.crypto."
+    );
+```
+
+The prefix **must** end with a dot (`.`).
+
+## In-memory keystore crypto factory
+
+`AS4CryptoFactoryInMemoryKeyStore` accepts an already-loaded `KeyStore`. This is useful when you:
+
+- Fetch credentials from a secrets manager at startup
+- Load a key store from a byte array or database
+- Need the key store loaded before the configuration system initializes
+
+### Using descriptor objects
+
+The cleanest way is to build descriptor objects and hand them to the factory:
+
+```java
+import com.helger.phase4.crypto.AS4CryptoFactoryInMemoryKeyStore;
+import com.helger.phase4.crypto.AS4KeyStoreDescriptor;
+import com.helger.phase4.crypto.AS4TrustStoreDescriptor;
+import com.helger.security.keystore.KeyStoreAndKeyDescriptor;
+import com.helger.security.keystore.TrustStoreDescriptor;
+import com.helger.security.keystore.EKeyStoreType;
+import com.helger.phase4.config.AS4Configuration;
+
+// Build the key store descriptor from the default configuration
+KeyStoreAndKeyDescriptor keyStoreDesc =
+    AS4KeyStoreDescriptor.createFromConfig(
+        AS4Configuration.getConfig(),
+        "org.apache.wss4j.crypto.merlin.",
+        null  // use the default Java security provider
+    );
+
+// Build the trust store descriptor (optional)
+TrustStoreDescriptor trustStoreDesc =
+    AS4TrustStoreDescriptor.createFromConfig(
+        AS4Configuration.getConfig(),
+        "org.apache.wss4j.crypto.merlin.",
+        null
+    );
+
+// Create the factory — key stores are loaded eagerly here
+AS4CryptoFactoryInMemoryKeyStore factory =
+    new AS4CryptoFactoryInMemoryKeyStore(keyStoreDesc, trustStoreDesc);
+```
+
+### Using a pre-loaded KeyStore directly
+
+```java
+import java.security.KeyStore;
+import com.helger.phase4.crypto.AS4CryptoFactoryInMemoryKeyStore;
+
+KeyStore keyStore = KeyStore.getInstance("PKCS12");
+try (var is = MyClass.class.getResourceAsStream("/keys/mykey.p12")) {
+    keyStore.load(is, "keystorepass".toCharArray());
+}
+
+AS4CryptoFactoryInMemoryKeyStore factory = new AS4CryptoFactoryInMemoryKeyStore(
+    keyStore,
+    "my-alias",          // key alias inside the key store
+    "keypass".toCharArray(), // private key password
+    null                 // no trust store — uses JRE cacerts
+);
+```
+
+## AS4KeyStoreDescriptor
+
+`AS4KeyStoreDescriptor` is a static helper that reads key store configuration from a `IConfigWithFallback` object and produces a `KeyStoreAndKeyDescriptor`. It reads the following properties relative to the given prefix:
+
+| Suffix | Description |
+|---|---|
+| `keystore.type` | Key store type (`JKS`, `PKCS12`, …). Default: `JKS`. |
+| `keystore.file` | Path to the key store file. **Mandatory.** |
+| `keystore.password` | Key store password. **Mandatory.** |
+| `keystore.alias` | Alias of the private key entry. **Mandatory.** |
+| `keystore.private.password` | Private key password. **Mandatory.** |
+
+Returns `null` if any mandatory property is missing.
+
+## AS4TrustStoreDescriptor
+
+`AS4TrustStoreDescriptor` is the equivalent helper for trust stores. It reads:
+
+| Suffix | Description |
+|---|---|
+| `truststore.type` | Trust store type (`JKS`, `PKCS12`, …). Default: `JKS`. |
+| `truststore.file` | Path to the trust store file. **Mandatory** (returns `null` if absent). |
+| `truststore.password` | Trust store password. **Mandatory** (returns `null` if absent). |
+
+Returns `null` if path or password are missing — in that case the JRE default CA certificates are used.
+
+## Per-PMode crypto factories
+
+To use a different key pair for each P-Mode, implement the `IAS4PModeAwareCryptoFactory` interface. phase4 will call it with the active PMode and select the appropriate factory:
+
+```java
+import com.helger.phase4.crypto.IAS4CryptoFactory;
+import com.helger.phase4.crypto.IAS4PModeAwareCryptoFactory;
+import com.helger.phase4.model.pmode.IPMode;
+
+public class MyPerPModeCryptoFactory implements IAS4PModeAwareCryptoFactory {
+
+    @Override
+    public IAS4CryptoFactory getCryptoFactory(IPMode pmode) {
+        if ("peppol-prod".equals(pmode.getID())) {
+            return prodFactory;
+        }
+        return defaultFactory;
+    }
+}
+```
+
+<Tip>
+Use `IAS4PModeAwareCryptoFactory` when your deployment handles messages for multiple Peppol participants or profiles that require separate key material.
+</Tip>

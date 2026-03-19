@@ -1,0 +1,109 @@
+---
+title: Phase4CEFSender
+description: CEF AS4 profile sender for sending messages via OASIS BDXR SMP v1 or v2 dynamic discovery.
+---
+
+**Package:** `com.helger.phase4.cef`  
+**Maven artifact:** `com.helger.phase4:phase4-cef-client`
+
+`Phase4CEFSender` sends AS4 messages conforming to the CEF four-corner profile, using OASIS BDXR SMP v1 or v2 for dynamic discovery.
+
+## Factory method
+
+```java
+Phase4CEFSender.CEFUserMessageBuilder builder = Phase4CEFSender.builder();
+```
+
+## CEFUserMessageBuilder
+
+### Required fields
+
+<ParamField path="body.senderParticipantID" type="IParticipantIdentifier" required>
+  Participant ID of the sender. Ends up as the `originalSender` user message property.
+</ParamField>
+
+<ParamField path="body.receiverParticipantID" type="IParticipantIdentifier" required>
+  Participant ID of the receiver. Ends up as the `finalRecipient` user message property.
+</ParamField>
+
+<ParamField path="body.documentTypeID" type="IDocumentTypeIdentifier" required>
+  Document type identifier. Automatically sets the `action` field.
+</ParamField>
+
+<ParamField path="body.processID" type="IProcessIdentifier" required>
+  Process identifier. Automatically sets the `service` fields.
+</ParamField>
+
+<ParamField path="body.fromPartyID(IParticipantIdentifier)" type="IParticipantIdentifier" required>
+  The sender's AS4 party ID. Sets both type (scheme) and value.
+</ParamField>
+
+<ParamField path="body.toPartyID(IParticipantIdentifier)" type="IParticipantIdentifier" required>
+  The receiver's AS4 party ID. Sets both type (scheme) and value.
+</ParamField>
+
+<ParamField path="body.payload" type="AS4OutgoingAttachment" required>
+  The payload to send.
+</ParamField>
+
+<ParamField path="body.endpointDetailProvider" type="IAS4EndpointDetailProvider" required>
+  Endpoint discovery mechanism. Use `smpClient()` or `receiverEndpointDetails()`.
+</ParamField>
+
+### Endpoint discovery
+
+<ParamField path="body.smpClient(IBDXRExtendedServiceMetadataProvider)" type="IBDXRExtendedServiceMetadataProvider">
+  OASIS BDXR SMP v1 client for dynamic endpoint lookup.
+</ParamField>
+
+<ParamField path="body.smpClient(IBDXR2ServiceMetadataProvider)" type="IBDXR2ServiceMetadataProvider">
+  OASIS BDXR SMP v2 client for dynamic endpoint lookup. Since 0.10.6.
+</ParamField>
+
+<ParamField path="body.receiverEndpointDetails(X509Certificate, String)" type="void">
+  Set endpoint statically: provide the receiver certificate and destination URL directly.
+</ParamField>
+
+### Optional fields
+
+<ParamField path="body.certificateConsumer" type="Consumer&lt;X509Certificate&gt;">
+  Optional callback invoked with the resolved receiver AP certificate.
+</ParamField>
+
+<ParamField path="body.endointURLConsumer" type="Consumer&lt;String&gt;">
+  Optional callback invoked with the resolved AP endpoint URL.
+</ParamField>
+
+<ParamField path="body.useOriginalSenderFinalRecipientTypeAttr" type="boolean" default="true">
+  Controls whether the `type` attribute on the `originalSender` and `finalRecipient` user message properties is emitted. Since 0.10.3.
+</ParamField>
+
+## Example
+
+```java
+import com.helger.phase4.cef.Phase4CEFSender;
+import com.helger.peppolid.factory.SimpleIdentifierFactory;
+import com.helger.smpclient.bdxr1.BDXRClientReadOnly;
+
+SimpleIdentifierFactory IF = Phase4CEFSender.IF;
+
+BDXRClientReadOnly smpClient = new BDXRClientReadOnly(smpBaseURI);
+
+EAS4UserMessageSendResult result = Phase4CEFSender.builder()
+    .cryptoFactorySign(cryptoFactory)
+    .cryptoFactoryCrypt(cryptoFactory)
+    .senderParticipantID(IF.createParticipantIdentifier("urn:oasis:names:tc:ebcore:partyid-type:unregistered", "sender"))
+    .receiverParticipantID(IF.createParticipantIdentifier("urn:oasis:names:tc:ebcore:partyid-type:unregistered", "receiver"))
+    .documentTypeID(IF.createDocumentTypeIdentifier("doctype", "urn:example:doc"))
+    .processID(IF.createProcessIdentifier("cenbii-procid-ubl", "urn:www.cenbii.eu:profile:bii04:ver2.0"))
+    .fromPartyID(IF.createParticipantIdentifier("urn:oasis:names:tc:ebcore:partyid-type:unregistered", "sender"))
+    .toPartyID(IF.createParticipantIdentifier("urn:oasis:names:tc:ebcore:partyid-type:unregistered", "receiver"))
+    .fromRole(CAS4.DEFAULT_INITIATOR_URL)
+    .toRole(CAS4.DEFAULT_RESPONDER_URL)
+    .smpClient(smpClient)
+    .payload(AS4OutgoingAttachment.builder()
+        .data(payloadBytes)
+        .mimeType(CMimeType.APPLICATION_XML)
+        .build())
+    .sendMessageAndCheckForReceipt();
+```

@@ -1,0 +1,237 @@
+---
+title: Endpoint detail providers
+description: Implementations of IAS4EndpointDetailProvider for static, Peppol SMP, OASIS BDXR SMP v1, and BDXR SMP v2 endpoint discovery.
+---
+
+**Package:** `com.helger.phase4.dynamicdiscovery`  
+**Maven artifact:** `com.helger.phase4:phase4-dynamic-discovery`
+
+Endpoint detail providers decouple AS4 senders from how the receiver's certificate and endpoint URL are resolved. This can be a live SMP lookup or a hard-coded test endpoint.
+
+## IAS4EndpointDetailProvider
+
+Base interface. All providers implement these three methods:
+
+```java
+// Called before getReceiverAPCertificate() and getReceiverAPEndpointURL().
+// May be called multiple times; implementations should cache results.
+void init(
+    IDocumentTypeIdentifier aDocTypeID,
+    IProcessIdentifier aProcID,
+    IParticipantIdentifier aReceiverID
+) throws Phase4Exception;
+
+// The receiver's AS4 AP X.509 certificate. May be null.
+@Nullable X509Certificate getReceiverAPCertificate() throws Phase4Exception;
+
+// The receiver's AS4 endpoint URL. Never null or empty.
+@NonNull String getReceiverAPEndpointURL() throws Phase4Exception;
+
+// The technical contact from the SMP registration. May be null or empty. Since 3.2.0.
+@Nullable String getReceiverTechnicalContact() throws Phase4Exception;
+```
+
+---
+
+## AS4EndpointDetailProviderConstant
+
+Provides fixed (pre-known) endpoint details. Useful for testing or when endpoint information is obtained by means other than SMP.
+
+### Constructors
+
+```java
+new AS4EndpointDetailProviderConstant(
+    X509Certificate aReceiverCert,  // nullable
+    String sDestURL                 // required, non-empty
+)
+
+new AS4EndpointDetailProviderConstant(
+    X509Certificate aReceiverCert,  // nullable
+    String sDestURL,                // required, non-empty
+    String sTechnicalContact        // nullable
+)
+```
+
+<ParamField path="body.aReceiverCert" type="X509Certificate">
+  The receiver's AP certificate used for encryption. May be `null` if encryption is not required.
+</ParamField>
+
+<ParamField path="body.sDestURL" type="String" required>
+  The AS4 endpoint URL of the receiver. Must be non-empty.
+</ParamField>
+
+<ParamField path="body.sTechnicalContact" type="String">
+  Optional technical contact information.
+</ParamField>
+
+`init()` is a no-op for this implementation.
+
+### Example
+
+```java
+IAS4EndpointDetailProvider provider = new AS4EndpointDetailProviderConstant(
+    receiverX509Cert,
+    "https://receiver.example.com/as4"
+);
+```
+
+---
+
+## AS4EndpointDetailProviderPeppol
+
+Looks up endpoint details from a Peppol SMP using the SMP client API. Since 0.10.6.
+
+### Constructors
+
+```java
+new AS4EndpointDetailProviderPeppol(
+    ISMPServiceGroupProvider aServiceGroupProvider,
+    ISMPExtendedServiceMetadataProvider aServiceMetadataProvider
+)
+```
+
+```java
+// Convenience factory when both providers are the same SMPClientReadOnly instance
+AS4EndpointDetailProviderPeppol.create(SMPClientReadOnly aSMPClient)
+```
+
+<ParamField path="body.aServiceGroupProvider" type="ISMPServiceGroupProvider" required>
+  Provides SMP service group information.
+</ParamField>
+
+<ParamField path="body.aServiceMetadataProvider" type="ISMPExtendedServiceMetadataProvider" required>
+  Resolves SMP service metadata for a given participant and document type.
+</ParamField>
+
+### Configuration
+
+<ParamField path="body.setTransportProfile" type="ISMPTransportProfile">
+  Override the transport profile used to select the endpoint from the SMP result. Default: `ESMPTransportProfile.TRANSPORT_PROFILE_PEPPOL_AS4_V2`.
+</ParamField>
+
+### Getters
+
+```java
+ISMPServiceGroupProvider sgp = provider.getServiceGroupProvider();
+ISMPServiceMetadataProvider smp = provider.getServiceMetadataProvider();
+ISMPTransportProfile tp         = provider.getTransportProfile();
+EndpointType endpoint           = provider.getEndpoint(); // non-null after init()
+```
+
+### Example
+
+```java
+import com.helger.phase4.dynamicdiscovery.AS4EndpointDetailProviderPeppol;
+import com.helger.smpclient.peppol.SMPClientReadOnly;
+import com.helger.smpclient.url.PeppolNaptrURLProvider;
+
+SMPClientReadOnly smpClient = new SMPClientReadOnly(
+    PeppolNaptrURLProvider.INSTANCE,
+    receiverParticipantID,
+    ESML.DIGIT_PRODUCTION
+);
+
+IAS4EndpointDetailProvider provider = AS4EndpointDetailProviderPeppol.create(smpClient);
+```
+
+---
+
+## AS4EndpointDetailProviderBDXR
+
+Looks up endpoint details from an OASIS BDXR SMP v1 server. Since 0.10.6.
+
+### Constructor
+
+```java
+new AS4EndpointDetailProviderBDXR(
+    IBDXRExtendedServiceMetadataProvider aSMPClient // required
+)
+```
+
+<ParamField path="body.aSMPClient" type="IBDXRExtendedServiceMetadataProvider" required>
+  OASIS BDXR SMP v1 client instance.
+</ParamField>
+
+### Configuration
+
+<ParamField path="body.setTransportProfile" type="ISMPTransportProfile">
+  Transport profile for endpoint selection. Default: `ESMPTransportProfile.TRANSPORT_PROFILE_BDXR_AS4`.
+</ParamField>
+
+### Getters
+
+```java
+IBDXRExtendedServiceMetadataProvider client = provider.getServiceMetadataProvider();
+ISMPTransportProfile tp                     = provider.getTransportProfile();
+EndpointType endpoint                       = provider.getEndpoint(); // non-null after init()
+```
+
+### Example
+
+```java
+import com.helger.phase4.dynamicdiscovery.AS4EndpointDetailProviderBDXR;
+import com.helger.smpclient.bdxr1.BDXRClientReadOnly;
+
+BDXRClientReadOnly smpClient = new BDXRClientReadOnly(smpBaseURI);
+IAS4EndpointDetailProvider provider = new AS4EndpointDetailProviderBDXR(smpClient);
+```
+
+---
+
+## AS4EndpointDetailProviderBDXR2
+
+Looks up endpoint details from an OASIS BDXR SMP v2 server. Since 0.10.6.
+
+### Constructor
+
+```java
+new AS4EndpointDetailProviderBDXR2(
+    IBDXR2ServiceMetadataProvider aSMPClient // required
+)
+```
+
+<ParamField path="body.aSMPClient" type="IBDXR2ServiceMetadataProvider" required>
+  OASIS BDXR SMP v2 client instance.
+</ParamField>
+
+### Configuration
+
+<ParamField path="body.setTransportProfile" type="ISMPTransportProfile">
+  Transport profile for endpoint selection. Default: `ESMPTransportProfile.TRANSPORT_PROFILE_BDXR_AS4`.
+</ParamField>
+
+### Getters
+
+```java
+IBDXR2ServiceMetadataProvider client = provider.getServiceMetadataProvider();
+ISMPTransportProfile tp              = provider.getTransportProfile();
+EndpointType endpoint                = provider.getEndpoint(); // non-null after init()
+```
+
+### Example
+
+```java
+import com.helger.phase4.dynamicdiscovery.AS4EndpointDetailProviderBDXR2;
+import com.helger.smpclient.bdxr2.BDXR2ClientReadOnly;
+
+BDXR2ClientReadOnly smpClient = new BDXR2ClientReadOnly(smpBaseURI);
+IAS4EndpointDetailProvider provider = new AS4EndpointDetailProviderBDXR2(smpClient);
+```
+
+---
+
+## Error handling
+
+All `init()` implementations throw `Phase4SMPException` (a subtype of `Phase4Exception`) when SMP lookup fails. The `isRetryFeasible()` flag on the exception indicates whether the failure is transient:
+
+```java
+try {
+    provider.init(docTypeID, processID, receiverID);
+} catch (Phase4SMPException ex) {
+    if (ex.isRetryFeasible()) {
+        // transient network error - retry may succeed
+    } else {
+        // non-transient error - do not retry
+    }
+}
+```

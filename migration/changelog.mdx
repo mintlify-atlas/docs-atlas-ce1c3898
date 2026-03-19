@@ -1,0 +1,173 @@
+---
+title: Changelog
+description: Version history and notable changes for the phase4 AS4 library.
+---
+
+
+## Current development
+
+### 4.4.1-SNAPSHOT
+
+_In development_
+
+- Ongoing bug fixes and dependency updates
+
+---
+
+## 4.x releases
+
+### 4.4.0
+
+_Released March 2026_
+
+- Added **eDelivery2** profile support ([#366](https://github.com/phax/phase4/pull/366))
+- Removed OSGi bundle support — phase4 no longer ships OSGi manifests
+- Updated GitHub Actions CI configuration
+- Internal version bumps and dependency upgrades
+
+### 4.3.2
+
+- Added more fields to the sending report (outbound)
+- Added new fields for SMP lookup results in the sending report
+- Added example code showing how to capture sent and received messages
+- Improved error messages for failed incoming message processing
+- Unified method naming conventions across sender builders
+- Using the central `IdentifierFactory` for reception processing
+- Updated `peppol-commons` to 12.3.12
+
+### 4.3.1
+
+- Added default proxy settings support to HTTP client configuration
+- Improved customizability of incoming message processing
+- Updated to ph-web 11.2.2
+- Improved logging to include certificate issuer information
+- Replaced specific ESML usage with generic SML resolver
+- Various version bump dependencies
+
+### 4.3.0
+
+_Minor version bump — contains breaking API changes_
+
+- Extended `IAS4ProfileValidator.validatePMode` with an additional `EAS4ProfileValidationMode` parameter
+- Extended the SPI method to contain the error list
+- Added check on C2/C3 layout for Peppol
+- Removed several deprecated/old methods
+- Updated regex handling using `peppol-commons` utilities
+
+<Note>
+4.3.0 contains breaking API changes in `IAS4ProfileValidator`. If you have custom profile validators, you must update the `validatePMode` method signature to include the `EAS4ProfileValidationMode` parameter.
+</Note>
+
+### 4.2.7 – 4.2.1
+
+- Various patch releases with dependency updates and minor fixes
+- Improved resilience when receiving crappy/malformed signal messages
+- Added support for technical contact consumer in DBNAlliance profile
+- Added `addEbmsProperties` convenience method to message builders
+- Improved raw response data access in sender builders
+
+### 4.2.0
+
+- Added getter methods on all `SendingReport` fields
+- Improved resilience for malformed incoming signal messages
+- Added checks for unexpected response structures
+- Various test improvements
+
+### 4.1.1
+
+- Patch release with minor fixes
+
+### 4.1.0
+
+- Migrated to **JSpecify** nullable annotations (`@NonNull`, `@Nullable`) for improved static analysis ([#345](https://github.com/phax/phase4/pull/345))
+- Increased customizability of AgreementRef handling
+- Improved Peppol CA checker integration
+- Fixed AgreementRef type checking
+- Updated default field values in several builders
+
+### 4.0.2 – 4.0.1
+
+- Patch releases with bug fixes
+
+### 4.0.0
+
+_Major version — requires Java 11+, ph-commons v12_
+
+- Updated to **ph-commons v12** (major dependency upgrade)
+- Removed the legacy EESPA profile
+- Cleaned up module structure and removed unused dependencies
+- Internal package and class reorganisation
+
+<Note>
+Migrating from 3.x to 4.0.0 requires updating ph-commons to v12. Check the [ph-commons migration guide](https://github.com/phax/ph-commons) for details.
+</Note>
+
+---
+
+## 3.x releases
+
+### 3.2.2 – 3.0.0
+
+The 3.x series introduced the current architecture with SPI-based profile registration, the `IAS4DuplicateManager` interface, and the `AS4DumpManager` infrastructure.
+
+<Accordion title="Key highlights from the 3.x series">
+
+- `IAS4ProfileRegistrarSPI` introduced for auto-discovery of profiles
+- `AS4DuplicateManagerInMemory` and `AS4DuplicateManagerXML` implementations
+- `AS4DumpManager` with `IAS4IncomingDumper` and `IAS4OutgoingDumper`
+- `HttpRetrySettings` for configurable transport-level retries
+- `Phase4PeppolHttpClientSettings` extracted to `phase4-profile-peppol`
+- `PModeReceptionAwareness` with configurable retry and duplicate detection
+- DBNAlliance profile added
+- BDEW profile added
+- ENTSOG profile added
+
+</Accordion>
+
+---
+
+## Configuration property changes
+
+The following configuration key was renamed in 3.0.0:
+
+| Old key (before 3.0.0) | New key |
+|------------------------|----------|
+| `phase4.profile` | `phase4.default.profile` |
+
+Both keys are still read for backwards compatibility via `getAsStringOrFallback`.
+
+---
+
+## Maven coordinates
+
+All phase4 modules share the same `groupId` and version:
+
+```xml
+<groupId>com.helger.phase4</groupId>
+<!-- artifactId depends on the module -->
+<version>4.4.1-SNAPSHOT</version>
+```
+
+<CardGroup cols={2}>
+  <Card title="Core library" icon="layers">
+    `phase4-lib`
+  </Card>
+  <Card title="Peppol profile" icon="network">
+    `phase4-profile-peppol`
+  </Card>
+  <Card title="CEF profile" icon="network">
+    `phase4-profile-cef`
+  </Card>
+  <Card title="BDEW profile" icon="network">
+    `phase4-profile-bdew`
+  </Card>
+  <Card title="ENTSOG profile" icon="network">
+    `phase4-profile-entsog`
+  </Card>
+  <Card title="DBNAlliance profile" icon="network">
+    `phase4-profile-dbnalliance`
+  </Card>
+  <Card title="EUDAMED client" icon="send">
+    `phase4-eudamed-client`
+  </Card>
+</CardGroup>

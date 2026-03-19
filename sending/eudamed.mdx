@@ -1,0 +1,127 @@
+---
+title: EUDAMED Sending
+description: Send AS4 messages to the European Database on Medical Devices (EUDAMED) using Phase4EudamedSender.
+---
+
+`Phase4EudamedSender` sends AS4 messages to the European Database on Medical Devices (EUDAMED) using the CEF four-corner AS4 profile.
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-eudamed-client</artifactId>
+  <version>x.y.z</version>
+</dependency>
+```
+
+## Basic example
+
+```java
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.phase4.eudamed.Phase4EudamedSender;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+
+final EAS4UserMessageSendResult eResult =
+    Phase4EudamedSender.builder()
+        // Sender and receiver participant IDs (as plain strings for EUDAMED)
+        .senderParticipantID("urn:eudamed:sender:example")
+        .receiverParticipantID("urn:eudamed:receiver:example")
+        // Document and process type
+        .documentTypeID(
+            Phase4EudamedSender.IF.createDocumentTypeIdentifier(
+                "eudamed-doctype", "urn:eudamed:doctype:UDI:1.0"))
+        .processID(
+            Phase4EudamedSender.IF.createProcessIdentifier(
+                "eudamed-process", "urn:eudamed:process:UDI"))
+        // Party IDs in the EBMS User Message
+        .fromPartyID(
+            Phase4EudamedSender.IF.createParticipantIdentifier("scheme", "sender-party"))
+        .fromRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator")
+        .toPartyID(
+            Phase4EudamedSender.IF.createParticipantIdentifier("scheme", "receiver-party"))
+        .toRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/responder")
+        // Payload
+        .payload(AS4OutgoingAttachment.builder()
+                                      .data(aPayloadBytes)
+                                      .mimeTypeXML())
+        // Static endpoint (EUDAMED endpoints are pre-known)
+        .receiverEndpointDetails(aReceiverX509Cert,
+                                 "https://eudamed.ec.europa.eu/as4/endpoint")
+        .sendMessageAndCheckForReceipt();
+
+if (eResult.isSuccess())
+    LOGGER.info("EUDAMED message delivered");
+```
+
+## EUDAMED profile specifics
+
+| Property | Value |
+|---|---|
+| AS4 profile ID | CEF four-corner (`AS4CEFProfileRegistarSPI.AS4_PROFILE_ID_FOUR_CORNER`) |
+| `originalSender` property | Set from `senderParticipantID(String)` |
+| `finalRecipient` property | Set from `receiverParticipantID(String)` |
+| Participant IDs | Plain strings (not `IParticipantIdentifier`) |
+
+<Note>
+  Unlike the CEF sender, `senderParticipantID` and `receiverParticipantID` in `Phase4EudamedSender` accept plain `String` values, not `IParticipantIdentifier` objects. The `type` attribute is not emitted on the message properties.
+</Note>
+
+## Party ID helpers
+
+`fromPartyID` and `toPartyID` accept an `IParticipantIdentifier` and split it into type and value internally:
+
+```java
+import com.helger.peppolid.simple.participant.SimpleParticipantIdentifier;
+
+.fromPartyID(new SimpleParticipantIdentifier("urn:oasis:names:tc:ebcore:partyid-type:unregistered",
+                                             "sender-gln"))
+.toPartyID(new SimpleParticipantIdentifier("urn:oasis:names:tc:ebcore:partyid-type:unregistered",
+                                           "receiver-gln"))
+```
+
+Alternatively, use the string setters from the base builder:
+
+```java
+.fromPartyIDType("urn:oasis:names:tc:ebcore:partyid-type:unregistered")
+.fromPartyID("sender-gln")
+```
+
+## Endpoint discovery
+
+`Phase4EudamedSender` supports both static and dynamic endpoints:
+
+<Tabs>
+  <Tab title="Static (recommended for EUDAMED)">
+```java
+// Provide the certificate and URL directly
+.receiverEndpointDetails(aReceiverX509Cert,
+                         "https://eudamed.ec.europa.eu/as4/endpoint")
+```
+  </Tab>
+  <Tab title="Dynamic (custom provider)">
+```java
+.endpointDetailProvider(myCustomProvider)
+```
+  </Tab>
+</Tabs>
+
+Observe discovery results:
+
+```java
+Phase4EudamedSender.builder()
+    .certificateConsumer(cert -> LOGGER.info("AP cert: " + cert.getSubjectX500Principal()))
+    .endointURLConsumer(url -> LOGGER.info("Sending to: " + url))
+    ...
+```
+
+## Required fields
+
+- `senderParticipantID(String)` and `receiverParticipantID(String)`
+- `documentTypeID(IDocumentTypeIdentifier)` or `action(String)`
+- `processID(IProcessIdentifier)` or `service(String, String)`
+- `fromPartyID(...)` and `fromRole(String)`
+- `toPartyID(...)` and `toRole(String)`
+- `payload(AS4OutgoingAttachment.Builder)` — a non-null payload is required
+- `endpointDetailProvider(...)` or `receiverEndpointDetails(...)` — exactly one of these
+- Crypto factory (inherited from base builder)

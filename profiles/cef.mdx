@@ -1,0 +1,145 @@
+---
+title: CEF eDelivery Profile
+description: CEF (Connecting Europe Facility) eDelivery AS4 profile for EU public administrations.
+---
+
+
+The CEF eDelivery AS4 profile is defined by the European Commission for interoperability between public administrations across Europe. It supports both one-way/push and two-way/push-push messaging patterns.
+
+<CardGroup cols={2}>
+  <Card title="Maven Artifact" icon="box">
+    `phase4-profile-cef`
+  </Card>
+  <Card title="Profile ID" icon="fingerprint">
+    `cef` / `cef-four-corner`
+  </Card>
+</CardGroup>
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-profile-cef</artifactId>
+  <version>4.4.1-SNAPSHOT</version>
+</dependency>
+```
+
+## Overview
+
+The CEF eDelivery profile is used across a range of EU infrastructure programmes. The profile supports two MEP combinations:
+
+- **One-way / Push** – a single message is pushed from initiator to responder
+- **Two-way / Push-Push** – both parties can push messages on each leg
+
+Both MEP modes share the same security requirements.
+
+## PMode structure
+
+Two factory methods are provided in `CEFPMode`:
+
+<CodeGroup>
+```java One-way PMode
+import com.helger.phase4.profile.cef.CEFPMode;
+import com.helger.phase4.model.pmode.IPModeIDProvider;
+
+PMode pMode = CEFPMode.createCEFPMode(
+    "initiator-id",
+    "responder-id",
+    "https://responder.example.com/as4",
+    IPModeIDProvider.DEFAULT_DYNAMIC,
+    true  // persist
+);
+```
+```java Two-way PMode
+PMode pMode = CEFPMode.createCEFPModeTwoWay(
+    "initiator-id",
+    "responder-id",
+    "https://responder.example.com/as4",
+    IPModeIDProvider.DEFAULT_DYNAMIC,
+    true  // persist
+);
+```
+</CodeGroup>
+
+| Parameter | Value |
+|-----------|-------|
+| Agreement ID | `urn:as4:agreement` |
+| SOAP version | SOAP 1.2 (AS4 default) |
+| WSS version | WS-Security 1.1.1 |
+| One-way MEP | One-Way / Push |
+| Two-way MEP | Two-Way / Push-Push |
+
+## Security requirements
+
+The `CEFCompatibilityValidator` enforces the following constraints on every PMode leg:
+
+<Warning>
+Deviating from these values will cause the compatibility validator to report an error.
+</Warning>
+
+| Setting | Required value |
+|---------|----------------|
+| Signature algorithm | `RSA_SHA_256` (`http://www.w3.org/2001/04/xmldsig-more#rsa-sha256`) |
+| Signature hash function | `SHA-256` (`http://www.w3.org/2001/04/xmlenc#sha256`) |
+| Encryption algorithm | `AES-128-GCM` (`http://www.w3.org/2009/xmlenc11#aes128-gcm`) |
+| Minimum encryption strength | 128-bit |
+| WSS version | `1.1.1` |
+| PModeAuthorize | `false` |
+| Receipt reply pattern | `Response` (synchronous) |
+| Non-repudiation | `true` |
+| Error handling – ReportAsResponse | `true` |
+
+### Four-corner model flag
+
+The `CEFCompatibilityValidator` has an optional flag that controls whether the four-corner model (requiring `originalSender` and `finalRecipient` message properties) is enforced:
+
+```java
+import com.helger.phase4.profile.cef.CEFCompatibilityValidator;
+
+// Default: four-corner model IS enforced
+CEFCompatibilityValidator validator = new CEFCompatibilityValidator();
+
+// Disable four-corner model requirement (for two-corner scenarios)
+validator.setExpectFourCornerModel(false);
+```
+
+## Message properties
+
+When the four-corner model is enabled (default), each user message must include:
+
+- **`originalSender`** – C1 party identifier
+- **`finalRecipient`** – C4 party identifier
+
+## PartyInfo constraints
+
+- `PartyInfo/From` must contain at most one `PartyID`
+- `PartyInfo/To` must contain at most one `PartyID`
+
+Unlike Peppol, CEF does not mandate a specific party type ID format.
+
+## Compression
+
+If payload compression is configured, only GZIP compression is accepted:
+
+```java
+// PMode.PayloadService.CompressionMode must be GZIP if set
+new PModePayloadService(EAS4CompressionMode.GZIP)
+```
+
+## Reception awareness
+
+```java
+// From CEFPMode.generatePModeReceptionAwareness():
+// receptionAwareness = true
+// retry = true
+// maxRetries = 1
+// retryIntervalMS = 10_000 (10 seconds)
+// duplicateDetection = true
+```
+
+## EUDAMED usage
+
+<Note>
+The EUDAMED profile (EU Medical Devices Database) is built on top of the CEF profile. The `phase4-eudamed-client` module uses `AS4CEFProfileRegistarSPI.AS4_PROFILE_ID_FOUR_CORNER` internally and adds EUDAMED-specific HTTP client settings.
+</Note>

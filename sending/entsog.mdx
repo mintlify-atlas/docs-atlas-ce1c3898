@@ -1,0 +1,114 @@
+---
+title: ENTSOG Sending
+description: Send AS4 messages to the European gas transmission network using Phase4ENTSOGSender with ENTSOG-specific payload parameters.
+---
+
+`Phase4ENTSOGSender` sends AS4 messages conforming to the ENTSOG (European Network of Transmission System Operators for Gas) AS4 profile.
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-entsog-client</artifactId>
+  <version>x.y.z</version>
+</dependency>
+```
+
+## Basic example
+
+```java
+import com.helger.phase4.attachment.AS4OutgoingAttachment;
+import com.helger.phase4.entsog.Phase4ENTSOGSender;
+import com.helger.phase4.entsog.Phase4ENTSOGSender.ENTSOGPayloadParams;
+import com.helger.phase4.sender.EAS4UserMessageSendResult;
+
+// Optional ENTSOG payload parameters
+final ENTSOGPayloadParams aPayloadParams = new ENTSOGPayloadParams();
+aPayloadParams.setDocumentType("01G");  // EDIG@S Nomination document
+
+final EAS4UserMessageSendResult eResult =
+    Phase4ENTSOGSender.builder()
+        // Party identifiers
+        .fromPartyID("SENDER-EIC")
+        .fromRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/initiator")
+        .toPartyID("RECEIVER-EIC")
+        .toRole("http://docs.oasis-open.org/ebxml-msg/ebms/v3.0/ns/core/200704/responder")
+        // Endpoint (ENTSOG uses static configuration)
+        .endpointURL("https://receiver.example.org/entsog/as4")
+        .receiverCertificate(aReceiverX509Cert)
+        // Service and action
+        .service("urn:entsog:edigas:as4:1.0")
+        .action("urn:entsog:edigas:as4:action:nomination")
+        // Payload with ENTSOG-specific parameters
+        // GZip compression is enforced automatically
+        .payload(AS4OutgoingAttachment.builder()
+                                      .data(aPayloadBytes)
+                                      .mimeTypeXML(),
+                 aPayloadParams)
+        .sendMessageAndCheckForReceipt();
+
+if (eResult.isSuccess())
+    LOGGER.info("ENTSOG message delivered");
+```
+
+## ENTSOG profile specifics
+
+| Property | Default value |
+|---|---|
+| AS4 profile ID | `AS4ENTSOGProfileRegistarSPI.AS4_PROFILE_ID` |
+| Conversation ID | `""` (empty — must not be changed) |
+| Signing key identifier type | `ISSUER_SERIAL` |
+| Encryption key identifier type | `ISSUER_SERIAL` |
+| Payload compression | GZip enforced by `payload(Builder, ENTSOGPayloadParams)` |
+
+<Warning>
+  Like BDEW, the `conversationID` is fixed to an empty string per ENTSOG specification. Do not change it.
+</Warning>
+
+## ENTSOGPayloadParams
+
+The ENTSOG profile uses the `EDIGASDocumentType` attachment part property to carry the EDIG@S document type code:
+
+| Method | Attachment property | Description |
+|---|---|---|
+| `setDocumentType(String)` | `EDIGASDocumentType` | EDIG@S document type (e.g. `"01G"` for Nomination) |
+
+```java
+final ENTSOGPayloadParams aParams = new ENTSOGPayloadParams();
+aParams.setDocumentType("01G");
+
+Phase4ENTSOGSender.builder()
+    ...
+    .payload(AS4OutgoingAttachment.builder().data(aPayloadBytes).mimeTypeXML(), aParams)
+    ...
+```
+
+`ENTSOGPayloadParams` is optional. Pass `null` if you don't need the `EDIGASDocumentType` property.
+
+## Crypto key identifier types
+
+Override the defaults if your trading partner requires different settings:
+
+```java
+import com.helger.phase4.crypto.ECryptoKeyIdentifierType;
+
+Phase4ENTSOGSender.builder()
+    .encryptionKeyIdentifierType(ECryptoKeyIdentifierType.X509_KEY_IDENTIFIER)
+    .signingKeyIdentifierType(ECryptoKeyIdentifierType.ISSUER_SERIAL)
+    ...
+```
+
+## Required fields
+
+All of the following must be provided before sending:
+
+- `fromPartyID(String)` and `fromRole(String)`
+- `toPartyID(String)` and `toRole(String)`
+- `endpointURL(String)`
+- `payload(AS4OutgoingAttachment.Builder, ENTSOGPayloadParams)` — a non-null payload is required
+- Crypto factory (inherited from `AbstractAS4MessageBuilder`)
+
+<Note>
+  ENTSOG does not use dynamic SMP discovery. The endpoint URL and receiver certificate must be configured statically using `endpointURL()` and `receiverCertificate()` or `receiverCertificateAlias()`.
+</Note>

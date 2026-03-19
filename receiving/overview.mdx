@@ -1,0 +1,91 @@
+---
+title: Receiving Messages
+description: How phase4 receives and processes incoming AS4 messages via a servlet-based architecture with SPI handlers.
+---
+
+phase4 receives AS4 messages over HTTP using a standard Jakarta Servlet. Incoming requests are parsed, validated, decrypted, and verified before being handed off to your application code via the Java Service Provider Interface (SPI) mechanism.
+
+## Architecture
+
+The receiving stack consists of four layers:
+
+<Steps>
+  <Step title="HTTP request arrives at the servlet">
+    An HTTP POST request carrying an AS4 message reaches the registered servlet endpoint (typically `/as4`).
+  </Step>
+  <Step title="AS4XServletHandler dispatches the request">
+    `AS4XServletHandler` reads the request stream, creates `AS4IncomingMessageMetadata` capturing connection metadata, and delegates to `AS4RequestHandler`.
+  </Step>
+  <Step title="AS4RequestHandler parses and validates">
+    The handler parses the SOAP envelope, verifies the WS-Security signature, decrypts the payload, checks the AS4 profile constraints, detects duplicates, and builds the response (receipt or error signal).
+  </Step>
+  <Step title="SPI processors receive the clean payload">
+    All registered `IAS4IncomingMessageProcessorSPI` implementations are called with the decrypted, verified payload. Your application logic lives here.
+  </Step>
+</Steps>
+
+```
+HTTP POST /as4
+     │
+     ▼
+AS4Servlet (or Phase4PeppolAS4Servlet)
+     │  registers handler for HTTP POST
+     ▼
+AS4XServletHandler
+     │  creates AS4IncomingMessageMetadata
+     │  optionally calls IAS4ServletRequestHandlerCustomizer.customizeBeforeHandling()
+     ▼
+AS4RequestHandler.handleRequest()
+     │  parses SOAP / MIME multipart
+     │  verifies signature (WSS4J)
+     │  decrypts payload
+     │  validates against AS4 profile
+     │  checks for duplicates
+     ▼
+IAS4IncomingMessageProcessorSPI (one or more, loaded via ServiceLoader)
+     │  processAS4UserMessage()   – user messages
+     │  processAS4SignalMessage() – receipts / errors / pull-requests
+     ▼
+Receipt or Error signal returned to sender
+```
+
+## Key classes
+
+| Class / Interface | Role |
+|---|---|
+| `AS4Servlet` | Thin Jakarta Servlet that wires `AS4XServletHandler` for HTTP POST |
+| `Phase4PeppolAS4Servlet` | Peppol-specific servlet that configures the security customizer automatically |
+| `AS4XServletHandler` | Main servlet handler; creates metadata and runs `AS4RequestHandler` |
+| `IAS4ServletRequestHandlerCustomizer` | Optional hook to configure `AS4RequestHandler` before/after processing |
+| `AS4RequestHandler` | Core pipeline: parse → verify → decrypt → profile-check → SPI dispatch |
+| `IAS4IncomingMessageProcessorSPI` | SPI interface your application implements to receive user/signal messages |
+| `AS4IncomingMessageMetadata` | Transport-level metadata (IP, TLS cert, timestamp) for one incoming request |
+| `AS4ServerInitializer` | One-time server bootstrap: registers managers and schedules duplicate cleanup |
+
+## The SPI pattern
+
+phase4 uses `java.util.ServiceLoader` to discover all `IAS4IncomingMessageProcessorSPI` implementations on the classpath. To register your implementation, create the file:
+
+```
+META-INF/services/com.helger.phase4.incoming.spi.IAS4IncomingMessageProcessorSPI
+```
+
+and list your fully-qualified class name inside it. Multiple implementations are supported and all are called for each message.
+
+<Tip>
+For Peppol networks, phase4 ships `Phase4PeppolServletMessageProcessorSPI` which already implements this SPI. It unwraps the SBDH payload and delegates to your `IPhase4PeppolIncomingSBDHandlerSPI`. You only need to implement the latter.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Servlet setup" href="/receiving/servlet-setup">
+    Register `AS4Servlet` in `web.xml` and configure `AS4XServletHandler`.
+  </Card>
+  <Card title="Peppol server" href="/receiving/peppol-server">
+    Use `Phase4PeppolAS4Servlet` and implement `IPhase4PeppolIncomingSBDHandlerSPI`.
+  </Card>
+  <Card title="Message processing" href="/receiving/message-processing">
+    Understand the processing lifecycle, metadata, duplicate detection, and error handling.
+  </Card>
+</CardGroup>

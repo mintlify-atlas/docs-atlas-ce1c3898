@@ -1,0 +1,170 @@
+---
+title: Peppol Profile
+description: OpenPeppol AS4 profile for sending and receiving business documents across the Peppol network using phase4.
+---
+
+
+The Peppol profile implements the [OpenPeppol AS4 profile specification](https://docs.peppol.eu/edelivery/as4/specification/), which defines the mandatory security settings and message exchange patterns for Access Points (AP) in the Peppol network.
+
+<CardGroup cols={2}>
+  <Card title="Maven Artifact" icon="box">
+    `phase4-profile-peppol`
+  </Card>
+  <Card title="Profile ID" icon="fingerprint">
+    `peppol`
+  </Card>
+</CardGroup>
+
+## Maven dependency
+
+```xml
+<dependency>
+  <groupId>com.helger.phase4</groupId>
+  <artifactId>phase4-profile-peppol</artifactId>
+  <version>4.4.1-SNAPSHOT</version>
+</dependency>
+```
+
+## Overview
+
+The Peppol network uses a four-corner model:
+
+- **C1** – Sender (original sender, `originalSender` message property)
+- **C2** – Sender's Access Point
+- **C3** – Receiver's Access Point
+- **C4** – Receiver (final recipient, `finalRecipient` message property)
+
+Communication between C2 and C3 uses AS4 with the Peppol profile. The profile enforces one-way/push messaging: the initiator sends a business document and the responder returns only an AS4 receipt.
+
+## PMode structure
+
+The default PMode is created by `PeppolPMode.createPeppolPMode(...)`. Key parameters:
+
+| Parameter | Value |
+|-----------|-------|
+| MEP | One-Way |
+| MEP Binding | Push |
+| Agreement ID | `urn:fdc:peppol.eu:2017:agreements:tia:ap_provider` |
+| Party type | `urn:fdc:peppol.eu:2017:identifiers:ap` |
+| SOAP version | SOAP 1.2 (AS4 default) |
+| WSS version | WS-Security 1.1.1 |
+
+```java
+import com.helger.phase4.profile.peppol.PeppolPMode;
+import com.helger.phase4.model.pmode.IPModeIDProvider;
+
+PMode pMode = PeppolPMode.createPeppolPMode(
+    "your-ap-id",        // initiator party ID (C2)
+    "receiver-ap-id",   // responder party ID (C3)
+    "https://receiver.example.com/as4", // endpoint URL
+    IPModeIDProvider.DEFAULT_DYNAMIC,
+    true                 // persist in PMode manager
+);
+```
+
+## Security requirements
+
+These constraints are enforced by `PeppolCompatibilityValidator` and will cause validation errors if not met:
+
+<Warning>
+All of these settings are mandatory. Deviating from them will cause the compatibility validator to reject the PMode or message.
+</Warning>
+
+| Setting | Required value |
+|---------|----------------|
+| Signature algorithm | `RSA_SHA_256` (`http://www.w3.org/2001/04/xmldsig-more#rsa-sha256`) |
+| Signature hash function | `SHA-256` (`http://www.w3.org/2001/04/xmlenc#sha256`) |
+| Encryption algorithm | `AES-128-GCM` (`http://www.w3.org/2009/xmlenc11#aes128-gcm`) |
+| WSS version | `1.1.1` |
+| PModeAuthorize | `false` |
+| Receipt reply pattern | `Response` (synchronous) |
+| Non-repudiation | `true` |
+| Error handling – ReportAsResponse | `true` |
+
+### Security leg configuration
+
+```java
+import com.helger.phase4.profile.peppol.PeppolPMode;
+import com.helger.phase4.model.pmode.leg.PModeLegSecurity;
+
+// The security leg is pre-configured by PeppolPMode.generatePModeLegSecurity()
+PModeLegSecurity security = PeppolPMode.generatePModeLegSecurity();
+// security.getX509SignatureAlgorithm() == ECryptoAlgorithmSign.RSA_SHA_256
+// security.getX509EncryptionAlgorithm() == ECryptoAlgorithmCrypt.AES_128_GCM
+// security.isSendReceiptNonRepudiation() == true
+```
+
+## Required message properties
+
+Every Peppol user message must carry two mandatory EBMS message properties:
+
+- **`originalSender`** – the C1 party identifier (e.g. Peppol participant ID)
+- **`finalRecipient`** – the C4 party identifier (e.g. Peppol participant ID)
+
+```java
+// These are checked by PeppolCompatibilityValidator.validateUserMessage(...)
+// Example values:
+// originalSender: "iso6523-actorid-upis::0088:5060001000002"
+// finalRecipient:  "iso6523-actorid-upis::0088:5060001000008"
+```
+
+## AgreementRef requirements
+
+- Value must be `urn:fdc:peppol.eu:2017:agreements:tia:ap_provider`
+- The `@type` attribute must **not** be set
+- PartyInfo `@type` on both `From` and `To` must be `urn:fdc:peppol.eu:2017:identifiers:ap`
+
+## HTTP client settings
+
+`Phase4PeppolHttpClientSettings` extends `HttpClientSettings` with Peppol-specific defaults:
+
+| Setting | Value |
+|---------|-------|
+| TLS version | TLS 1.2 |
+| Connection request timeout | 1 second |
+| Connect timeout | 5 seconds |
+| Response timeout | 2 minutes (per Peppol SLA) |
+| User-Agent | `phase4/{version} https://github.com/phax/phase4` |
+
+```java
+import com.helger.phase4.profile.peppol.Phase4PeppolHttpClientSettings;
+
+Phase4PeppolHttpClientSettings httpSettings = new Phase4PeppolHttpClientSettings();
+// Use with your HTTP client builder:
+// AS4ClientUserMessage.builder()
+//     .httpClientSettings(httpSettings)
+//     ...
+```
+
+<Note>
+`Phase4PeppolHttpClientSettings` trusts all TLS certificates. In production you should configure proper trust anchors using Peppol's PKI.
+</Note>
+
+## Reception awareness
+
+The default PMode configures reception awareness as follows:
+
+```java
+// From PeppolPMode.generatePModeReceptionAwareness():
+// receptionAwareness = true
+// retry = true
+// maxRetries = 1
+// retryIntervalMS = 10_000 (10 seconds)
+// duplicateDetection = true
+```
+
+## Peppol network endpoints
+
+| Environment | SML | SMP lookup |
+|-------------|-----|------------|
+| Production | `edelivery.tech.ec.europa.eu` | Via Peppol SMP |
+| Test | `acc.edelivery.tech.ec.europa.eu` | Via test SMP |
+
+Endpoint URLs are typically discovered at runtime via the Peppol SMP/SML infrastructure and passed dynamically to `createPeppolPMode(...)` as the `sAddress` parameter.
+
+## Required certificates
+
+- **Peppol AP certificate** – issued by the OpenPeppol CA, used for signing outgoing messages
+- **Peppol AP certificate** of the receiver – used for encrypting the payload
+
+Certificates are typically retrieved from the receiver's SMP entry and are not part of the PMode definition itself.
